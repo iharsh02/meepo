@@ -3,6 +3,7 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { PlusIcon, ShuffleIcon } from "lucide-react"
+import { nanoid } from "nanoid"
 import { useRouter } from "next/navigation"
 import { Controller, useForm, useWatch } from "react-hook-form"
 
@@ -89,10 +90,10 @@ function NewBotForm() {
       name: "",
       job: "",
       instructions: "",
-      faceSeed: crypto.randomUUID(),
+      avatar: nanoid(),
     },
   })
-  const faceSeed = useWatch({ control: form.control, name: "faceSeed" })
+  const avatar = useWatch({ control: form.control, name: "avatar" })
   const { isSubmitting, errors } = form.formState
 
   async function onSubmit(values: BotInsert) {
@@ -135,7 +136,7 @@ function NewBotForm() {
 
       <FieldGroup>
         <Field orientation="horizontal" className="items-start">
-          <BotFace seed={faceSeed} className="size-14" />
+          <BotFace seed={avatar} className="size-14" />
           <FieldContent>
             <FieldTitle>Face</FieldTitle>
             <FieldDescription>Shuffle until you find one you like.</FieldDescription>
@@ -144,7 +145,7 @@ function NewBotForm() {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => form.setValue("faceSeed", crypto.randomUUID())}
+            onClick={() => form.setValue("avatar", nanoid())}
           >
             <ShuffleIcon data-icon="inline-start" />
             Shuffle
@@ -195,6 +196,7 @@ function NewBotForm() {
               <FieldLabel htmlFor="bot-instructions">How it should work</FieldLabel>
               <Textarea
                 {...field}
+                value={field.value ?? ""}
                 id="bot-instructions"
                 placeholder="Answer briefly, cite sources, and ask before running anything destructive."
                 className="min-h-24 resize-none"

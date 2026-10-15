@@ -55,7 +55,7 @@ export function NewGroupDialog({ bots }: { bots: Bot[] }) {
             {bots.map((bot) => (
               <Label key={bot.id} className="gap-2 font-normal">
                 <Checkbox name="botIds" value={bot.id} />
-                <BotFace seed={bot.faceSeed} className="size-6" />
+                <BotFace seed={bot.avatar} className="size-6" />
                 {bot.name}
               </Label>
             ))}

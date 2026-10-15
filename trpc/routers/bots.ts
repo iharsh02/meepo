@@ -13,7 +13,7 @@ export const botsRouter = createTRPCRouter({
       .select()
       .from(bots)
       .where(eq(bots.userId, ctx.user.id))
-      .orderBy(desc(bots.updatedAt))
+      .orderBy(desc(bots.createdAt))
   ),
 
   byId: protectedProcedure

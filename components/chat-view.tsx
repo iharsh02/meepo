@@ -48,7 +48,7 @@ export function ChatView({
         <header className="flex h-10 shrink-0 items-center gap-1 border-b px-3">
           <SidebarTrigger className="md:hidden" />
           <div className="flex h-7 items-center gap-1 rounded-md pr-2.5 pl-1.5 text-[13px] font-medium">
-            <BotFace seed={bot.faceSeed} className="size-5" />
+            <BotFace seed={bot.avatar} className="size-5" />
             {bot.name}
           </div>
           <Button

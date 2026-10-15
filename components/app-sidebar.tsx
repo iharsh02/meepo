@@ -88,16 +88,16 @@ export function AppSidebar({ bots, user }: { bots: Bot[]; user: SessionUser }) {
                   render={<Link href={`/chat/${bot.id}`} />}
                   className="gap-2 rounded-sm group-data-[collapsible=icon]:size-12! group-data-[collapsible=icon]:p-2!"
                 >
-                  <BotFace seed={bot.faceSeed} />
+                  <BotFace seed={bot.avatar} />
                   <div className="flex min-w-0 flex-1 flex-col">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="leading-4.5 font-medium">{bot.name}</span>
                       <span className="text-xs text-muted-foreground">
-                        {formatDistanceToNowStrict(bot.updatedAt)}
+                        {formatDistanceToNowStrict(bot.createdAt)}
                       </span>
                     </div>
                     <span className="truncate text-xs text-muted-foreground">
-                      {bot.job || "No messages yet"}
+                      {bot.job}
                     </span>
                   </div>
                 </SidebarMenuButton>
@@ -241,7 +241,7 @@ function BotSearch({
                   onOpenChange(false)
                 }}
               >
-                <BotFace seed={bot.faceSeed} className="size-5" />
+                <BotFace seed={bot.avatar} className="size-5" />
                 {bot.name}
               </CommandItem>
             ))}
