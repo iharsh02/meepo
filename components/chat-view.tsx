@@ -1,8 +1,16 @@
 "use client"
 
 import { useState } from "react"
-import { CornerDownLeftIcon, MonitorIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
+import { useChat } from "@ai-sdk/react"
+import { DefaultChatTransport, type UIMessage } from "ai"
+import {
+  CornerDownLeftIcon,
+  MonitorIcon,
+  PlusIcon,
+  RefreshCwIcon,
+} from "lucide-react"
 
+import { MessageResponse } from "@/components/ai-elements/message"
 import { BotFace } from "@/components/bot-face"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
@@ -24,22 +32,16 @@ import {
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import type { Bot } from "@/db/schema"
 
-export type ChatMessage = {
-  id: string
-  role: "user" | "assistant"
-  text: string
-}
-
 // One conversation with a bot, plus the toggleable workspace panel that shows
-// the bot's desktop. Messages are local state until the AI SDK is wired in.
-export function ChatView({
-  bot,
-  initialMessages,
-}: {
-  bot: Bot
-  initialMessages: ChatMessage[]
-}) {
-  const [messages, setMessages] = useState(initialMessages)
+// the bot's desktop. Messages stream from app/api/chat and live only in memory,
+// so they're gone on reload. Key it by bot id so switching bots starts fresh.
+export function ChatView({ bot }: { bot: Bot }) {
+  const { messages, sendMessage, status, error } = useChat({
+    transport: new DefaultChatTransport({
+      api: "/api/chat",
+      body: { botId: bot.id },
+    }),
+  })
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
 
   return (
@@ -78,6 +80,11 @@ export function ChatView({
                     <ChatBubble message={message} />
                   </MessageScrollerItem>
                 ))}
+                {error && (
+                  <p className="text-center text-sm text-destructive">
+                    Something went wrong. Try sending that again.
+                  </p>
+                )}
               </MessageScrollerContent>
             </MessageScrollerViewport>
             <MessageScrollerButton />
@@ -85,12 +92,8 @@ export function ChatView({
         </MessageScrollerProvider>
 
         <Composer
-          onSend={(text) =>
-            setMessages((current) => [
-              ...current,
-              { id: crypto.randomUUID(), role: "user", text },
-            ])
-          }
+          busy={status === "submitted" || status === "streaming"}
+          onSend={(text) => sendMessage({ text })}
         />
       </div>
 
@@ -99,8 +102,11 @@ export function ChatView({
   )
 }
 
-function ChatBubble({ message }: { message: ChatMessage }) {
+function ChatBubble({ message }: { message: UIMessage }) {
   const fromUser = message.role === "user"
+  const text = message.parts
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("")
 
   return (
     <Message align={fromUser ? "end" : "start"}>
@@ -108,10 +114,12 @@ function ChatBubble({ message }: { message: ChatMessage }) {
         <Bubble
           variant="secondary"
           align={fromUser ? "end" : "start"}
-          className={fromUser ? "*:data-[slot=bubble-content]:bg-neutral-700" : undefined}
+          className={
+            fromUser ? "*:data-[slot=bubble-content]:bg-neutral-700" : undefined
+          }
         >
           <BubbleContent className="rounded-[22px] py-2.5 leading-5">
-            {message.text}
+            {fromUser ? text : <MessageResponse>{text}</MessageResponse>}
           </BubbleContent>
         </Bubble>
       </MessageContent>
@@ -119,13 +127,19 @@ function ChatBubble({ message }: { message: ChatMessage }) {
   )
 }
 
-// Enter sends, Shift+Enter adds a newline.
-function Composer({ onSend }: { onSend: (text: string) => void }) {
+// Enter sends, Shift+Enter adds a newline. Sending waits while `busy`.
+function Composer({
+  busy,
+  onSend,
+}: {
+  busy: boolean
+  onSend: (text: string) => void
+}) {
   const [text, setText] = useState("")
 
   function send() {
     const trimmed = text.trim()
-    if (!trimmed) return
+    if (!trimmed || busy) return
     onSend(trimmed)
     setText("")
   }
@@ -162,7 +176,7 @@ function Composer({ onSend }: { onSend: (text: string) => void }) {
             variant="default"
             size="icon-sm"
             className="ml-auto rounded-lg"
-            disabled={!text.trim()}
+            disabled={!text.trim() || busy}
           >
             <CornerDownLeftIcon />
             <span className="sr-only">Send</span>

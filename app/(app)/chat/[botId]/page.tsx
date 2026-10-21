@@ -8,5 +8,5 @@ export default async function ChatPage({ params }: PageProps<"/chat/[botId]">) {
   const bot = await caller.bots.byId({ id: botId })
   if (!bot) notFound()
 
-  return <ChatView key={bot.id} bot={bot} initialMessages={[]} />
+  return <ChatView key={bot.id} bot={bot} />
 }
