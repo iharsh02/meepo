@@ -2,16 +2,37 @@
 
 import { useState } from "react"
 import { useChat } from "@ai-sdk/react"
-import { DefaultChatTransport, type UIMessage } from "ai"
+import type { TriggerChatTransport } from "@trigger.dev/sdk/chat"
 import {
+  useLoadTranscript,
+  useTriggerChatTransport,
+} from "@trigger.dev/sdk/chat/react"
+import type { UIMessage } from "ai"
+import {
+  CheckIcon,
+  CopyIcon,
   CornerDownLeftIcon,
   MonitorIcon,
   PlusIcon,
   RefreshCwIcon,
 } from "lucide-react"
 
-import { MessageResponse } from "@/components/ai-elements/message"
-import { BotFace } from "@/components/bot-face"
+import {
+  loadChatTranscript,
+  mintChatAccessToken,
+  startChatSession,
+} from "@/app/(app)/chat/actions"
+import {
+  MessageAction,
+  MessageActions,
+  MessageResponse,
+} from "@/components/ai-elements/message"
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/ai-elements/reasoning"
+import { BotFace, type BotFaceColors } from "@/components/bot-face"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import {
@@ -30,17 +51,31 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import { Spinner } from "@/components/ui/spinner"
 import type { Bot } from "@/db/schema"
+import type { botChat } from "@/trigger/chat"
 
 // One conversation with a bot, plus the toggleable workspace panel that shows
-// the bot's desktop. Messages stream from app/api/chat and live only in memory,
-// so they're gone on reload. Key it by bot id so switching bots starts fresh.
-export function ChatView({ bot }: { bot: Bot }) {
-  const { messages, sendMessage, status, error } = useChat({
-    transport: new DefaultChatTransport({
-      api: "/api/chat",
-      body: { botId: bot.id },
-    }),
+// the bot's desktop. Replies stream from the bot-chat agent in trigger/chat.ts,
+// which keeps the history under `chatId`; it's loaded back on open. Key it by
+// chat id so switching bots starts fresh. `faceColors` tints the user's
+// messages to match the bot's face (null falls back to neutral).
+export function ChatView({
+  bot,
+  chatId,
+  faceColors,
+}: {
+  bot: Bot
+  chatId: string
+  faceColors: BotFaceColors | null
+}) {
+  const transport = useTriggerChatTransport<typeof botChat>({
+    task: "bot-chat",
+    accessToken: ({ chatId }) => mintChatAccessToken(chatId),
+    startSession: ({ chatId }) => startChatSession({ chatId }),
+  })
+  const transcript = useLoadTranscript(chatId, loadChatTranscript, {
+    transport,
   })
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
 
@@ -67,34 +102,22 @@ export function ChatView({ bot }: { bot: Bot }) {
           </Button>
         </header>
 
-        <MessageScrollerProvider autoScroll>
-          <MessageScroller className="flex-1">
-            <MessageScrollerViewport>
-              <MessageScrollerContent className="gap-8 px-6 py-4">
-                {messages.map((message) => (
-                  <MessageScrollerItem
-                    key={message.id}
-                    messageId={message.id}
-                    scrollAnchor={message.role === "user"}
-                  >
-                    <ChatBubble message={message} />
-                  </MessageScrollerItem>
-                ))}
-                {error && (
-                  <p className="text-center text-sm text-destructive">
-                    Something went wrong. Try sending that again.
-                  </p>
-                )}
-              </MessageScrollerContent>
-            </MessageScrollerViewport>
-            <MessageScrollerButton />
-          </MessageScroller>
-        </MessageScrollerProvider>
-
-        <Composer
-          busy={status === "submitted" || status === "streaming"}
-          onSend={(text) => sendMessage({ text })}
-        />
+        {transcript.isLoading ? (
+          <div className="flex flex-1 items-center justify-center">
+            <Spinner />
+          </div>
+        ) : transcript.error ? (
+          <p className="flex-1 pt-8 text-center text-sm text-destructive">
+            Couldn&apos;t load this chat. Try reloading the page.
+          </p>
+        ) : (
+          <Conversation
+            chatId={chatId}
+            transport={transport}
+            initialMessages={transcript.messages}
+            faceColors={faceColors}
+          />
+        )}
       </div>
 
       {workspaceOpen && <WorkspacePanel botName={bot.name} />}
@@ -102,26 +125,151 @@ export function ChatView({ bot }: { bot: Bot }) {
   )
 }
 
-function ChatBubble({ message }: { message: UIMessage }) {
-  const fromUser = message.role === "user"
+// The messages and composer. Mounted once the transcript has loaded, because
+// useChat only reads its initial messages on mount.
+function Conversation({
+  chatId,
+  transport,
+  initialMessages,
+  faceColors,
+}: {
+  chatId: string
+  transport: TriggerChatTransport
+  initialMessages: UIMessage[]
+  faceColors: BotFaceColors | null
+}) {
+  const { messages, sendMessage, regenerate, status, error } = useChat({
+    id: chatId,
+    messages: initialMessages,
+    transport,
+  })
+  const busy = status === "submitted" || status === "streaming"
+
+  return (
+    <>
+      <MessageScrollerProvider autoScroll>
+        <MessageScroller className="flex-1">
+          <MessageScrollerViewport>
+            <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-8 px-6 py-6">
+              {messages.map((message, index) => (
+                <MessageScrollerItem
+                  key={message.id}
+                  messageId={message.id}
+                  scrollAnchor={message.role === "user"}
+                >
+                  <ChatMessage
+                    message={message}
+                    faceColors={faceColors}
+                    streaming={
+                      status === "streaming" && index === messages.length - 1
+                    }
+                    onRegenerate={
+                      index === messages.length - 1 && !busy
+                        ? () => regenerate({ messageId: message.id })
+                        : undefined
+                    }
+                  />
+                </MessageScrollerItem>
+              ))}
+              {error && (
+                <p className="text-center text-sm text-destructive">
+                  Something went wrong. Try sending that again.
+                </p>
+              )}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton />
+        </MessageScroller>
+      </MessageScrollerProvider>
+
+      <Composer busy={busy} onSend={(text) => sendMessage({ text })} />
+    </>
+  )
+}
+
+// The user's messages are right-aligned pills in the bot's face colours; the
+// bot's replies are plain
+// full-width markdown with copy (and, on the latest reply, regenerate) below.
+// `streaming` is true for the reply currently arriving. The model's reasoning,
+// when it sends any, shows above the reply and counts as thinking until the
+// first words of the answer arrive.
+function ChatMessage({
+  message,
+  faceColors,
+  streaming,
+  onRegenerate,
+}: {
+  message: UIMessage
+  faceColors: BotFaceColors | null
+  streaming: boolean
+  onRegenerate?: () => void
+}) {
+  const [copied, setCopied] = useState(false)
   const text = message.parts
     .map((part) => (part.type === "text" ? part.text : ""))
     .join("")
+  const reasoning = message.parts
+    .map((part) => (part.type === "reasoning" ? part.text : ""))
+    .filter(Boolean)
+    .join("\n\n")
+
+  if (message.role === "user") {
+    return (
+      <Message align="end">
+        <MessageContent>
+          <Bubble variant="secondary" align="end">
+            <BubbleContent
+              className="rounded-3xl px-5 py-3 text-[15px] leading-6 whitespace-pre-wrap"
+              style={
+                faceColors
+                  ? { backgroundColor: faceColors.body, color: faceColors.ink }
+                  : undefined
+              }
+            >
+              {text}
+            </BubbleContent>
+          </Bubble>
+        </MessageContent>
+      </Message>
+    )
+  }
+
+  async function copy() {
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   return (
-    <Message align={fromUser ? "end" : "start"}>
-      <MessageContent>
-        <Bubble
-          variant="secondary"
-          align={fromUser ? "end" : "start"}
-          className={
-            fromUser ? "*:data-[slot=bubble-content]:bg-neutral-700" : undefined
-          }
-        >
-          <BubbleContent className="rounded-[22px] py-2.5 leading-5">
-            {fromUser ? text : <MessageResponse>{text}</MessageResponse>}
-          </BubbleContent>
-        </Bubble>
+    <Message>
+      <MessageContent className="gap-3">
+        {reasoning && (
+          <Reasoning isStreaming={streaming && !text}>
+            <ReasoningTrigger />
+            <ReasoningContent>{reasoning}</ReasoningContent>
+          </Reasoning>
+        )}
+        {text && (
+          <MessageResponse
+            animated
+            isAnimating={streaming}
+            className="text-[15px] leading-7 text-foreground"
+          >
+            {text}
+          </MessageResponse>
+        )}
+        {text && !streaming && (
+          <MessageActions className="-ml-2 text-muted-foreground">
+            <MessageAction label={copied ? "Copied" : "Copy"} onClick={copy}>
+              {copied ? <CheckIcon /> : <CopyIcon />}
+            </MessageAction>
+            {onRegenerate && (
+              <MessageAction label="Regenerate" onClick={onRegenerate}>
+                <RefreshCwIcon />
+              </MessageAction>
+            )}
+          </MessageActions>
+        )}
       </MessageContent>
     </Message>
   )

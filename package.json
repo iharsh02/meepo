@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "trigger:dev": "trigger dev",
+    "trigger:deploy": "trigger deploy",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -26,6 +28,7 @@
     "@streamdown/math": "^1.0.3",
     "@streamdown/mermaid": "^1.0.3",
     "@teispace/next-themes": "^3.0.2",
+    "@trigger.dev/sdk": "4.7.5",
     "@trpc/server": "^11.19.0",
     "@xyflow/react": "^12.12.0",
     "ai": "^7.0.146",
@@ -62,6 +65,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@trigger.dev/build": "4.7.5",
     "@types/node": "^20",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
@@ -72,6 +76,7 @@
     "prettier": "^3.9.9",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^4",
+    "trigger.dev": "4.7.5",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
