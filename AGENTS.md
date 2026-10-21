@@ -27,6 +27,18 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Write TypeScript that Matt Pocock would sign off on.
 - When a repo has no existing choice, I like: Zustand, TanStack Query, TanStack Start, Clerk or Better Auth, Drizzle, Zod, Tailwind, Bun then pnpm.
 
+## Forms
+
+Follow the New bot form (`components/bots-dialog.tsx`) as the reference.
+
+- One Zod schema per form, in `db/validation.ts`. Build it with `createInsertSchema` from the Drizzle table and `.pick` it down to the fields a user may edit. The client form and the tRPC procedure's `.input()` share that schema.
+- User-facing error messages live in the schema, in plain words.
+- Client: react-hook-form with `zodResolver`, and `noValidate` on the `<form>`. Render each field through a `Controller` with shadcn `Field`, `FieldLabel` and `FieldError`, setting `data-invalid` and `aria-invalid`.
+- Submit through a server action that calls the tRPC `caller`. The action returns `{ error }` for expected failures instead of throwing, and the form shows it with `setError("root", ...)`.
+- The server sets ids and ownership (`id`, `userId`, ...) from the session. Never take them from the form.
+- Disable the submit button and show a `Spinner` while `isSubmitting`.
+- Put a form in a dialog inside the popup content, so it resets when the dialog closes.
+
 ## Questions are read only
 
 If I ask a question about the code, answer it. Do not edit files. Do not "fix it while I'm here". Wait for me to ask for the change.
