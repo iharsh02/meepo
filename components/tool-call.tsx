@@ -62,6 +62,35 @@ export function ToolCall({ part }: { part: BotToolPart }) {
   )
 }
 
+// What the bot is doing while a call runs, for the chat's status line
+// ("Running a command…").
+export function toolActivity(part: BotToolPart) {
+  switch (part.type) {
+    case "tool-bash":
+      return "Running a command"
+    case "tool-readFile":
+      return "Reading a file"
+    case "tool-writeFile":
+      return "Writing a file"
+    case "tool-listFiles":
+      return "Listing files"
+    case "tool-mouseClick":
+      return "Clicking"
+    case "tool-mouseMove":
+      return "Moving the mouse"
+    case "tool-mouseScroll":
+      return "Scrolling"
+    case "tool-keyboardType":
+      return "Typing"
+    case "tool-keyboardPress":
+      return "Pressing a key"
+    case "tool-viewScreen":
+      return "Looking at the screen"
+    case "tool-showScreen":
+      return "Taking a screenshot"
+  }
+}
+
 // A short, plain description of a call, from whatever input has streamed in.
 function toolTitle(part: BotToolPart) {
   switch (part.type) {

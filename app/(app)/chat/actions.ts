@@ -4,6 +4,7 @@ import { auth } from "@trigger.dev/sdk"
 import { chat, defaultStorage } from "@trigger.dev/sdk/ai"
 import { validateUIMessages } from "ai"
 
+import { getSandboxInfo, getScreenUrl } from "@/lib/daytona"
 import { caller } from "@/trpc/server"
 import type { botChat } from "@/trigger/chat"
 import type { BotChatMessage } from "@/trigger/sandbox-tools"
@@ -51,4 +52,31 @@ export async function loadChatTranscript(params: {
     ? await validateUIMessages<BotChatMessage>({ messages: stored })
     : []
   return { ...transcript, messages }
+}
+
+// Called by the workspace panel when it opens, reconnects or nears the URL's
+// expiry: a signed URL for the bot's live desktop (lib/daytona.ts). The bot is
+// looked up for the signed-in user, so the browser never picks the sandbox.
+// Returns an error message instead of throwing.
+export async function getBotScreenUrl(botId: string) {
+  try {
+    const bot = await caller.bots.byId({ id: botId })
+    if (!bot?.sandboxId) return { error: "This bot has no desktop." }
+    return { screen: await getScreenUrl(bot.sandboxId) }
+  } catch {
+    return { error: "Couldn't start the bot's desktop. Try again." }
+  }
+}
+
+// Called by the side panel's Environment card: the state, region and size of
+// the bot's sandbox, for the signed-in user's bot. Returns an error message
+// instead of throwing.
+export async function getBotSandbox(botId: string) {
+  try {
+    const bot = await caller.bots.byId({ id: botId })
+    if (!bot?.sandboxId) return { error: "This bot has no sandbox." }
+    return { sandbox: await getSandboxInfo(bot.sandboxId) }
+  } catch {
+    return { error: "Couldn't reach the bot's sandbox." }
+  }
 }

@@ -8,7 +8,11 @@ import { requireUser } from "@/lib/auth"
 import { caller } from "@/trpc/server"
 
 // Everything in (app) needs a signed-in user.
-export default async function AppLayout({ children }: { children: React.ReactNode }) {
+export default async function AppLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
   const user = await requireUser()
   const bots = await caller.bots.list()
   // The sidebar writes its open/collapsed state to this cookie.
@@ -20,7 +24,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       style={{ "--sidebar-width-icon": "4rem" } as React.CSSProperties}
     >
       <AppSidebar bots={bots} user={user} />
-      <SidebarInset className="min-w-0">{children}</SidebarInset>
+      {/* Pinned to the viewport height so pages scroll inside themselves (the
+          chat page scrolls only its messages), never the whole window. */}
+      <SidebarInset className="h-svh min-w-0">{children}</SidebarInset>
       <BotsDialog />
       <NewGroupDialog bots={bots} />
     </SidebarProvider>

@@ -17,7 +17,13 @@ import {
   PlusIcon,
 } from "lucide-react";
 import type { ComponentProps, HTMLAttributes } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 export type CommitProps = ComponentProps<typeof Collapsible>;
 
@@ -151,21 +157,21 @@ const formatRelativeDate = (date: Date) => {
   return relativeTimeFormat.format(days, "day");
 };
 
+const subscribeNever = () => () => {};
+
 export const CommitTimestamp = ({
   date,
   className,
   children,
   ...props
 }: CommitTimestampProps) => {
-  const [formatted, setFormatted] = useState("");
-
-  const updateFormatted = useCallback(() => {
-    setFormatted(formatRelativeDate(date));
-  }, [date]);
-
-  useEffect(() => {
-    updateFormatted();
-  }, [updateFormatted]);
+  // Relative to the client's "now": empty on the server and during
+  // hydration, so the markup matches, then filled in on the client.
+  const formatted = useSyncExternalStore(
+    subscribeNever,
+    () => formatRelativeDate(date),
+    () => ""
+  );
 
   return (
     <time

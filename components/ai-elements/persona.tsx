@@ -29,6 +29,17 @@ const useStrictModeSafeInit = () => {
   return ready;
 };
 
+// Rive state machine inputs are mutable objects set by assigning `.value`; that's
+// Rive's API, so the write lives here rather than on a hook's return value.
+const setRiveInput = (
+  input: ReturnType<typeof useStateMachineInput>,
+  value: boolean
+) => {
+  if (input) {
+    input.value = value;
+  }
+};
+
 export type PersonaState =
   | "idle"
   | "listening"
@@ -276,21 +287,11 @@ export const Persona: FC<PersonaProps> = memo(
     const speakingInput = useStateMachineInput(rive, stateMachine, "speaking");
     const asleepInput = useStateMachineInput(rive, stateMachine, "asleep");
 
-    // Rive state machine inputs are mutable objects that must be set via direct
-    // property assignment — this is the intended Rive API, not a React anti-pattern.
     useEffect(() => {
-      if (listeningInput) {
-        listeningInput.value = state === "listening";
-      }
-      if (thinkingInput) {
-        thinkingInput.value = state === "thinking";
-      }
-      if (speakingInput) {
-        speakingInput.value = state === "speaking";
-      }
-      if (asleepInput) {
-        asleepInput.value = state === "asleep";
-      }
+      setRiveInput(listeningInput, state === "listening");
+      setRiveInput(thinkingInput, state === "thinking");
+      setRiveInput(speakingInput, state === "speaking");
+      setRiveInput(asleepInput, state === "asleep");
     }, [state, listeningInput, thinkingInput, speakingInput, asleepInput]);
 
     const Component = source.hasModel ? PersonaWithModel : PersonaWithoutModel;

@@ -52,6 +52,14 @@ export async function getRunningSandbox(sandboxId: string) {
   return sandbox
 }
 
+// What the chat's side panel shows about a sandbox, without starting it:
+// its state ("started", "stopped", ...), region, and size (memory and disk in
+// GB).
+export async function getSandboxInfo(sandboxId: string) {
+  const { state, target, cpu, memory, disk } = await daytona.get(sandboxId)
+  return { state, region: target, cpu, memory, disk }
+}
+
 // Starts the sandbox's desktop (Xvfb, xfce4 and VNC) if it isn't running, before
 // any mouse, keyboard or screenshot call. It's checked every time rather than
 // remembered, because the desktop stops whenever the sandbox does.
@@ -68,4 +76,42 @@ export async function screenSize(sandbox: Sandbox) {
     throw new Error("The sandbox's desktop reported no screen size.")
   }
   return { width: screen.width, height: screen.height }
+}
+
+// noVNC (websockify) serves the desktop on this port in Daytona's default image.
+const NOVNC_PORT = 6080
+// Signed URLs last at most a day.
+const SCREEN_URL_SECONDS = 24 * 60 * 60
+const HOUR = 60 * 60 * 1000
+
+const screenUrls = new Map<string, { url: string; expiresAt: number }>()
+
+// A browser URL for the bot's live desktop (noVNC), for the chat's workspace
+// panel, and when it expires. Starts the sandbox and its desktop first if
+// needed, so calling it again also brings a stopped desktop back. It's a signed
+// preview URL: bound to the noVNC port and time-limited, unlike the
+// sandbox-wide preview token, which must never reach the browser. One URL is
+// reused per sandbox until it's within an hour of expiring, because every new
+// URL shows Daytona's preview warning page again.
+export async function getScreenUrl(sandboxId: string) {
+  const sandbox = await getRunningSandbox(sandboxId)
+  await startDesktop(sandbox)
+
+  const cached = screenUrls.get(sandboxId)
+  if (cached && cached.expiresAt - Date.now() > HOUR) return cached
+
+  const signed = await sandbox.getSignedPreviewUrl(
+    NOVNC_PORT,
+    SCREEN_URL_SECONDS
+  )
+  const url = new URL("/vnc.html", signed.url)
+  url.searchParams.set("autoconnect", "true")
+  url.searchParams.set("resize", "scale")
+  url.searchParams.set("reconnect", "true")
+  const screen = {
+    url: url.toString(),
+    expiresAt: Date.now() + SCREEN_URL_SECONDS * 1000,
+  }
+  screenUrls.set(sandboxId, screen)
+  return screen
 }

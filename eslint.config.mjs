@@ -14,6 +14,9 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Trigger.dev build output (`trigger dev` / `trigger deploy`).
     ".trigger/**",
+    // Installed agent skills (third-party docs and example scripts).
+    ".agents/**",
+    ".claude/**",
   ]),
 ]);
 

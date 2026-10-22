@@ -38,6 +38,8 @@ const ShimmerComponent = ({
   duration = 2,
   spread = 2,
 }: TextShimmerProps) => {
+  // Cached per element at module level (above), so this doesn't create a new
+  // component on each render; see the disable on its JSX below.
   const MotionComponent = getMotionComponent(
     Component as keyof JSX.IntrinsicElements
   );
@@ -48,6 +50,7 @@ const ShimmerComponent = ({
   );
 
   return (
+    // eslint-disable-next-line react-hooks/static-components -- cached per element, not created per render
     <MotionComponent
       animate={{ backgroundPosition: "0% center" }}
       className={cn(

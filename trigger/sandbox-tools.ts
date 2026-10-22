@@ -1,5 +1,11 @@
-import { chat, type InferChatUIMessageFromTools } from "@trigger.dev/sdk/ai"
-import { tool, type ModelMessage } from "ai"
+import { chat } from "@trigger.dev/sdk/ai"
+import {
+  tool,
+  type InferUITools,
+  type ModelMessage,
+  type UIDataTypes,
+  type UIMessage,
+} from "ai"
 import { z } from "zod"
 
 import { getRunningSandbox, screenSize, startDesktop } from "@/lib/daytona"
@@ -290,6 +296,22 @@ export const sandboxTools = {
   ),
 }
 
-// The chat's message type, with a typed part for each tool. Shared by the
-// agent (trigger/chat.ts) and the chat UI.
-export type BotChatMessage = InferChatUIMessageFromTools<typeof sandboxTools>
+// How full the model's context window is after a reply step, in tokens: all
+// of it (`window`), what the last step used, and the estimated share of that
+// taken by the system prompt and the tool definitions (the rest is messages).
+// The agent attaches it to each reply (trigger/chat.ts) for the Context card
+// in the chat's side panel (components/agent-panel.tsx).
+export type ContextUsage = {
+  window: number
+  used: number
+  system: number
+  tools: number
+}
+
+// The chat's message type, with a typed part for each tool and the context
+// usage as metadata. Shared by the agent (trigger/chat.ts) and the chat UI.
+export type BotChatMessage = UIMessage<
+  { context?: ContextUsage },
+  UIDataTypes,
+  InferUITools<typeof sandboxTools>
+>

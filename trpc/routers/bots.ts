@@ -56,6 +56,22 @@ export const botsRouter = createTRPCRouter({
       return bot
     }),
 
+  // Saves the side panel's Configure form for one of the user's bots. Its
+  // chats pick up the change from their next message (trigger/chat.ts).
+  update: protectedProcedure
+    .input(botInsertSchema.extend({ id: z.string() }))
+    .mutation(async ({ ctx, input: { id, ...values } }) => {
+      const [bot] = await ctx.db
+        .update(bots)
+        .set(values)
+        .where(and(eq(bots.id, id), eq(bots.userId, ctx.user.id)))
+        .returning()
+      if (!bot) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "That bot doesn't exist." })
+      }
+      return bot
+    }),
+
   // Deletes one of the user's bots, its sandbox and its direct chats. The
   // sandbox goes first, so if Daytona fails the bot is still there to retry.
   // The chats' saved conversations stay in Trigger.dev's transcript storage.

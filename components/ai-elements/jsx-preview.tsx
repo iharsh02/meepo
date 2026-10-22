@@ -207,13 +207,22 @@ export const JSXPreviewContent = memo(
       onErrorProp,
     } = useJSXPreview();
     const errorReportedRef = useRef<string | null>(null);
-    const lastGoodJsxRef = useRef("");
     const [hadError, setHadError] = useState(false);
+    const [prevJsx, setPrevJsx] = useState(processedJsx);
+    const [lastGoodJsx, setLocalLastGoodJsx] = useState("");
 
-    // Reset error tracking when jsx changes
+    // When the jsx changes, the previous one becomes the last good version if
+    // it rendered without error, and error tracking starts over.
+    if (prevJsx !== processedJsx) {
+      setPrevJsx(processedJsx);
+      if (!hadError) {
+        setLocalLastGoodJsx(prevJsx);
+      }
+      setHadError(false);
+    }
+
     useEffect(() => {
       errorReportedRef.current = null;
-      setHadError(false);
     }, [processedJsx]);
 
     const handleError = useCallback(
@@ -236,17 +245,15 @@ export const JSXPreviewContent = memo(
       [processedJsx, isStreaming, onErrorProp, setError]
     );
 
-    // Track the last JSX that rendered without error
+    // Report the last JSX that rendered without error
     useEffect(() => {
       if (!errorReportedRef.current) {
-        lastGoodJsxRef.current = processedJsx;
         setLastGoodJsx(processedJsx);
       }
     }, [processedJsx, setLastGoodJsx]);
 
     // During streaming, if the current JSX errored, re-render with last good version
-    const displayJsx =
-      isStreaming && hadError ? lastGoodJsxRef.current : processedJsx;
+    const displayJsx = isStreaming && hadError ? lastGoodJsx : processedJsx;
 
     return (
       <div className={cn("jsx-preview-content", className)} {...props}>

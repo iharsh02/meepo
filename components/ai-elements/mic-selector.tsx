@@ -55,29 +55,32 @@ export const useAudioDevices = () => {
   const [error, setError] = useState<string | null>(null);
   const [hasPermission, setHasPermission] = useState(false);
 
-  const loadDevicesWithoutPermission = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
+  // Runs on mount and on device changes. `loading` starts true, and state is
+  // only updated once the device list is back.
+  const loadDevicesWithoutPermission = useCallback(
+    () =>
+      navigator.mediaDevices
+        .enumerateDevices()
+        .then((deviceList) => {
+          setError(null);
+          setDevices(
+            deviceList.filter((device) => device.kind === "audioinput")
+          );
+        })
+        .catch((caughtError) => {
+          const message =
+            caughtError instanceof Error
+              ? caughtError.message
+              : "Failed to get audio devices";
 
-      const deviceList = await navigator.mediaDevices.enumerateDevices();
-      const audioInputs = deviceList.filter(
-        (device) => device.kind === "audioinput"
-      );
-
-      setDevices(audioInputs);
-    } catch (caughtError) {
-      const message =
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Failed to get audio devices";
-
-      setError(message);
-      console.error("Error getting audio devices:", message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+          setError(message);
+          console.error("Error getting audio devices:", message);
+        })
+        .finally(() => {
+          setLoading(false);
+        }),
+    []
+  );
 
   const loadDevicesWithPermission = useCallback(async () => {
     if (loading) {
