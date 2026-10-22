@@ -19,6 +19,7 @@
   "dependencies": {
     "@ai-sdk/react": "^4.0.150",
     "@base-ui/react": "^1.9.0",
+    "@daytona/sdk": "^0.225.0",
     "@hookform/resolvers": "^5.9.1",
     "@radix-ui/react-use-controllable-state": "^1.3.0",
     "@rive-app/react-webgl2": "^4.37.0",

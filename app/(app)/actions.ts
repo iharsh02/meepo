@@ -20,3 +20,17 @@ export async function createBotAction(input: BotInsert) {
     throw error
   }
 }
+
+// Deletes one of the signed-in user's bots, and its sandbox, via tRPC, then
+// refreshes the page so the sidebar drops it. Returns an error message
+// instead of throwing.
+export async function deleteBotAction(botId: string) {
+  try {
+    await caller.bots.delete({ id: botId })
+    refresh()
+    return {}
+  } catch (error) {
+    if (error instanceof TRPCError) return { error: error.message }
+    throw error
+  }
+}

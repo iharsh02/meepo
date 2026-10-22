@@ -1,19 +1,17 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState, type ComponentProps } from "react"
 import { useChat } from "@ai-sdk/react"
 import type { TriggerChatTransport } from "@trigger.dev/sdk/chat"
 import {
   useLoadTranscript,
   useTriggerChatTransport,
 } from "@trigger.dev/sdk/chat/react"
-import type { UIMessage } from "ai"
+import { isStaticToolUIPart } from "ai"
 import {
   CheckIcon,
-  CopyIcon,
   CornerDownLeftIcon,
   MonitorIcon,
-  PlusIcon,
   RefreshCwIcon,
 } from "lucide-react"
 
@@ -32,7 +30,8 @@ import {
   ReasoningContent,
   ReasoningTrigger,
 } from "@/components/ai-elements/reasoning"
-import { BotFace, type BotFaceColors } from "@/components/bot-face"
+import { BotFace } from "@/components/bot-face"
+import { ComposerMenu } from "@/components/composer-menu"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import {
@@ -53,30 +52,27 @@ import {
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import type { Bot } from "@/db/schema"
+import { ToolCall } from "@/components/tool-call"
 import type { botChat } from "@/trigger/chat"
+import type { BotChatMessage } from "@/trigger/sandbox-tools"
 
 // One conversation with a bot, plus the toggleable workspace panel that shows
 // the bot's desktop. Replies stream from the bot-chat agent in trigger/chat.ts,
 // which keeps the history under `chatId`; it's loaded back on open. Key it by
-// chat id so switching bots starts fresh. `faceColors` tints the user's
-// messages to match the bot's face (null falls back to neutral).
-export function ChatView({
-  bot,
-  chatId,
-  faceColors,
-}: {
-  bot: Bot
-  chatId: string
-  faceColors: BotFaceColors | null
-}) {
+// chat id so switching bots starts fresh.
+export function ChatView({ bot, chatId }: { bot: Bot; chatId: string }) {
   const transport = useTriggerChatTransport<typeof botChat>({
     task: "bot-chat",
     accessToken: ({ chatId }) => mintChatAccessToken(chatId),
     startSession: ({ chatId }) => startChatSession({ chatId }),
   })
-  const transcript = useLoadTranscript(chatId, loadChatTranscript, {
-    transport,
-  })
+  const transcript = useLoadTranscript<BotChatMessage>(
+    chatId,
+    loadChatTranscript,
+    {
+      transport,
+    }
+  )
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
 
   return (
@@ -115,7 +111,6 @@ export function ChatView({
             chatId={chatId}
             transport={transport}
             initialMessages={transcript.messages}
-            faceColors={faceColors}
           />
         )}
       </div>
@@ -131,12 +126,10 @@ function Conversation({
   chatId,
   transport,
   initialMessages,
-  faceColors,
 }: {
   chatId: string
   transport: TriggerChatTransport
-  initialMessages: UIMessage[]
-  faceColors: BotFaceColors | null
+  initialMessages: BotChatMessage[]
 }) {
   const { messages, sendMessage, regenerate, status, error } = useChat({
     id: chatId,
@@ -159,7 +152,6 @@ function Conversation({
                 >
                   <ChatMessage
                     message={message}
-                    faceColors={faceColors}
                     streaming={
                       status === "streaming" && index === messages.length - 1
                     }
@@ -187,29 +179,28 @@ function Conversation({
   )
 }
 
-// The user's messages are right-aligned pills in the bot's face colours; the
-// bot's replies are plain
-// full-width markdown with copy (and, on the latest reply, regenerate) below.
-// `streaming` is true for the reply currently arriving. The model's reasoning,
-// when it sends any, shows above the reply and counts as thinking until the
-// first words of the answer arrive.
+// The user's messages are right-aligned grey boxes; the bot's replies are plain full-width markdown with copy (and, on
+// the latest reply, regenerate) below.
+// A reply renders its parts in order: thinking, text and tool calls
+// (components/tool-call.tsx). `streaming` is true for the reply currently
+// arriving; its actions appear once it's done.
 function ChatMessage({
   message,
-  faceColors,
   streaming,
   onRegenerate,
 }: {
-  message: UIMessage
-  faceColors: BotFaceColors | null
+  message: BotChatMessage
   streaming: boolean
   onRegenerate?: () => void
 }) {
   const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 2000)
+    return () => clearTimeout(timer)
+  }, [copied])
   const text = message.parts
     .map((part) => (part.type === "text" ? part.text : ""))
-    .join("")
-  const reasoning = message.parts
-    .map((part) => (part.type === "reasoning" ? part.text : ""))
     .filter(Boolean)
     .join("\n\n")
 
@@ -218,14 +209,7 @@ function ChatMessage({
       <Message align="end">
         <MessageContent>
           <Bubble variant="secondary" align="end">
-            <BubbleContent
-              className="rounded-3xl px-5 py-3 text-[15px] leading-6 whitespace-pre-wrap"
-              style={
-                faceColors
-                  ? { backgroundColor: faceColors.body, color: faceColors.ink }
-                  : undefined
-              }
-            >
+            <BubbleContent className="rounded-xl px-4 py-2.5 text-[15px] leading-6 whitespace-pre-wrap text-foreground">
               {text}
             </BubbleContent>
           </Bubble>
@@ -234,30 +218,43 @@ function ChatMessage({
     )
   }
 
+  // The check icon reverts after 2 seconds. Copying can fail when the browser
+  // denies clipboard access; the button then just stays as it was.
   async function copy() {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+    } catch {}
   }
 
   return (
     <Message>
       <MessageContent className="gap-3">
-        {reasoning && (
-          <Reasoning isStreaming={streaming && !text}>
-            <ReasoningTrigger />
-            <ReasoningContent>{reasoning}</ReasoningContent>
-          </Reasoning>
-        )}
-        {text && (
-          <MessageResponse
-            animated
-            isAnimating={streaming}
-            className="text-[15px] leading-7 text-foreground"
-          >
-            {text}
-          </MessageResponse>
-        )}
+        {message.parts.map((part, index) => {
+          if (part.type === "reasoning" && part.text) {
+            return (
+              <Reasoning key={index} isStreaming={part.state === "streaming"}>
+                <ReasoningTrigger />
+                <ReasoningContent>{part.text}</ReasoningContent>
+              </Reasoning>
+            )
+          }
+          if (part.type === "text" && part.text) {
+            return (
+              <MessageResponse
+                key={index}
+                animated
+                isAnimating={part.state === "streaming"}
+                className="text-[15px] leading-7 text-foreground"
+              >
+                {part.text}
+              </MessageResponse>
+            )
+          }
+          if (isStaticToolUIPart(part))
+            return <ToolCall key={index} part={part} />
+          return null
+        })}
         {text && !streaming && (
           <MessageActions className="-ml-2 text-muted-foreground">
             <MessageAction label={copied ? "Copied" : "Copy"} onClick={copy}>
@@ -294,7 +291,7 @@ function Composer({
 
   return (
     <form
-      className="shrink-0 p-4"
+      className="mx-auto w-full max-w-3xl shrink-0 px-6 pt-2 pb-4"
       onSubmit={(event) => {
         event.preventDefault()
         send()
@@ -314,11 +311,7 @@ function Composer({
           }}
         />
         <InputGroupAddon align="block-end" className="px-2 pb-2.5">
-          {/* Attachments aren't wired up yet. */}
-          <InputGroupButton size="icon-sm" className="rounded-lg">
-            <PlusIcon />
-            <span className="sr-only">Attach</span>
-          </InputGroupButton>
+          <ComposerMenu />
           <InputGroupButton
             type="submit"
             variant="default"
@@ -354,6 +347,30 @@ function WorkspacePanel({ botName }: { botName: string }) {
         </p>
       </div>
     </aside>
+  )
+}
+
+// Copy icon in Lucide's style (24px grid, stroke 2, round joins), drawn so the
+// back sheet's edges run into the front sheet. Lucide's own `Copy` leaves gaps
+// that look chopped at 16px.
+function CopyIcon(props: ComponentProps<"svg">) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" />
+    </svg>
   )
 }
 

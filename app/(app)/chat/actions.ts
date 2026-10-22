@@ -2,9 +2,11 @@
 
 import { auth } from "@trigger.dev/sdk"
 import { chat, defaultStorage } from "@trigger.dev/sdk/ai"
+import { validateUIMessages } from "ai"
 
 import { caller } from "@/trpc/server"
 import type { botChat } from "@/trigger/chat"
+import type { BotChatMessage } from "@/trigger/sandbox-tools"
 
 const startSession = chat.createStartSessionAction<typeof botChat>("bot-chat")
 const loadTranscript = chat.createLoadTranscriptAction(defaultStorage)
@@ -33,11 +35,20 @@ export async function mintChatAccessToken(chatId: string) {
   })
 }
 
-// Called by useLoadTranscript to show a chat's history on page load.
+// Called by useLoadTranscript to show a chat's history on page load. The
+// stored messages come back untyped, so they're checked against the UI message
+// shape before the chat renders them as BotChatMessages. The validator rejects
+// an empty list (a new chat) and empty messages (a reply stopped before it
+// began), so those are left out first.
 export async function loadChatTranscript(params: {
   chatId: string
   limit?: number
 }) {
   await assertOwnsChat(params.chatId)
-  return loadTranscript(params)
+  const transcript = await loadTranscript(params)
+  const stored = transcript.messages.filter((message) => message.parts.length)
+  const messages = stored.length
+    ? await validateUIMessages<BotChatMessage>({ messages: stored })
+    : []
+  return { ...transcript, messages }
 }

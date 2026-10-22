@@ -6,3 +6,4 @@ allowBuilds:
   msw: false
   esbuild: true
   '@depot/cli': false
+  protobufjs: false

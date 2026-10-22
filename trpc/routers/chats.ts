@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server"
-import { and, eq } from "drizzle-orm"
+import { and, asc, eq, sql } from "drizzle-orm"
 import { z } from "zod"
 
 import { bots, chatMembers, chats } from "@/db/schema"
@@ -18,7 +18,8 @@ export const chatsRouter = createTRPCRouter({
     }),
 
   // The direct chat with one of the user's bots, created on first open.
-  // Returns null when the bot isn't theirs.
+  // Returns null when the bot isn't theirs. Concurrent opens for the same bot
+  // (two tabs, a prefetch) queue on an advisory lock, so only one gets created.
   openDirect: protectedProcedure
     .input(z.object({ botId: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -28,14 +29,24 @@ export const chatsRouter = createTRPCRouter({
         .where(and(eq(bots.id, input.botId), eq(bots.userId, ctx.user.id)))
       if (!bot) return null
 
-      const [existing] = await ctx.db
-        .select({ id: chats.id })
-        .from(chats)
-        .innerJoin(chatMembers, eq(chatMembers.chatId, chats.id))
-        .where(and(eq(chats.kind, "direct"), eq(chatMembers.botId, bot.id)))
-      if (existing) return existing
-
       return ctx.db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${bot.id}))`)
+
+        const [existing] = await tx
+          .select({ id: chats.id })
+          .from(chats)
+          .innerJoin(chatMembers, eq(chatMembers.chatId, chats.id))
+          .where(
+            and(
+              eq(chats.userId, ctx.user.id),
+              eq(chats.kind, "direct"),
+              eq(chatMembers.botId, bot.id)
+            )
+          )
+          .orderBy(asc(chats.createdAt))
+          .limit(1)
+        if (existing) return existing
+
         const [chat] = await tx
           .insert(chats)
           .values({ userId: ctx.user.id })
