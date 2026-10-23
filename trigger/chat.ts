@@ -5,11 +5,12 @@ import { db } from "@/db"
 import type { Bot } from "@/db/schema"
 import {
   botSandbox,
-  dropOldScreenshots,
+  loadScreenshot,
   sandboxTools,
   type BotChatMessage,
   type ContextUsage,
 } from "@/trigger/sandbox-tools"
+import { prepareScreenshotMessages } from "@/trigger/screenshot-messages"
 
 const MODEL = "minimax/minimax-m3.1-flash"
 // MODEL's context window, in tokens.
@@ -61,8 +62,8 @@ export const botChat = chat.withUIMessage<BotChatMessage>().agent({
       // The SDK doesn't know this model's limits and would cap replies at 4,096
       // tokens (thinking included) without this.
       maxOutputTokens: 32_000,
-      prepareStep: ({ messages }) => ({
-        messages: dropOldScreenshots(messages),
+      prepareStep: async ({ messages }) => ({
+        messages: await prepareScreenshotMessages(messages, loadScreenshot),
       }),
       // Room for a multi-step task (look, click, type, look again) in one turn.
       stopWhen: isStepCount(40),
