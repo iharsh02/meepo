@@ -66,7 +66,16 @@ export function ChatView({ chatId }: { chatId: string }) {
   })
   const transcript = useLoadTranscript<BotChatMessage>(
     chatId,
-    loadChatTranscript,
+    async (params) => {
+      const transcript = await loadChatTranscript(params)
+      if (transcript.messages.length) {
+        const publicAccessToken = await mintChatAccessToken(params.chatId)
+        if (!transport.getSession(params.chatId)) {
+          transport.setSession(params.chatId, { publicAccessToken })
+        }
+      }
+      return transcript
+    },
     {
       transport,
     }
@@ -94,7 +103,8 @@ export function ChatView({ chatId }: { chatId: string }) {
 }
 
 // The messages and composer. Mounted once the transcript has loaded, because
-// useChat only reads its initial messages on mount.
+// useChat only reads its initial messages on mount. The loader restores the
+// session and seeds its transcript cursor before useChat resumes the stream.
 function Conversation({
   chatId,
   transport,
@@ -108,6 +118,7 @@ function Conversation({
     id: chatId,
     messages: initialMessages,
     transport,
+    resume: initialMessages.length > 0,
   })
   useReportContextUsage(messages)
   const busy = status === "submitted" || status === "streaming"
