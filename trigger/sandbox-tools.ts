@@ -1,4 +1,3 @@
-import { logger } from "@trigger.dev/sdk"
 import { chat } from "@trigger.dev/sdk/ai"
 import { tool, type InferUITools, type UIDataTypes, type UIMessage } from "ai"
 import { z } from "zod"
@@ -11,11 +10,11 @@ import {
 } from "@/lib/daytona"
 import {
   createScreenshotLoader,
+  mkdirScreenshotCommand,
+  newScreenshotId,
   readScreenshotBytes,
-  screenshotDirectory,
-  screenshotPath,
-  screenshotRoot,
-  screenshotsToDelete,
+  saveScreenshot,
+  screenshotCache,
 } from "@/trigger/screenshot-messages"
 
 // The chat's bot's sandbox id, set in the agent's onBoot (trigger/chat.ts) and
@@ -120,6 +119,7 @@ export function loadScreenshots(signal?: AbortSignal) {
   return createScreenshotLoader({
     chatId,
     signal,
+    cache: screenshotCache,
     lookup: async () => {
       const box = await getStartedSandbox(sandboxId)
       if (!box || box.state !== "started") return null
@@ -128,7 +128,8 @@ export function loadScreenshots(signal?: AbortSignal) {
         download: (path, fileSignal) =>
           readScreenshotBytes(
             {
-              downloadFile: (file) => box.fs.downloadFile(file),
+              downloadFile: (file, timeout) =>
+                box.fs.downloadFile(file, timeout),
               downloadFileStream: (file, options) =>
                 box.fs.downloadFileStream(file, options),
             },
@@ -141,67 +142,45 @@ export function loadScreenshots(signal?: AbortSignal) {
 }
 
 // viewScreen saves into the chat's directory, then drops every file but the
-// newest two. Missing files already become a placeholder on the next turn.
+// newest two. A failure here throws, so the tool never returns an id whose
+// file was not stored. The image is cached only after that succeeds.
 async function storeScreenshot(
   box: Awaited<ReturnType<typeof sandbox>>,
   chatId: string,
   id: string,
   base64: string
 ) {
-  await ensureFolder(box, screenshotRoot)
-  await ensureFolder(box, screenshotDirectory(chatId))
-  await box.fs.uploadFile(
-    Buffer.from(base64, "base64"),
-    screenshotPath(id, chatId)
-  )
-  await pruneScreenshots(box, chatId)
-}
-
-async function ensureFolder(
-  box: Awaited<ReturnType<typeof sandbox>>,
-  path: string
-) {
-  try {
-    await box.fs.listFiles(path)
-  } catch {
-    try {
-      await box.fs.createFolder(path, "755")
-    } catch (error) {
-      logger.warn("Couldn't create a screenshot directory", {
-        path,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-}
-
-async function pruneScreenshots(
-  box: Awaited<ReturnType<typeof sandbox>>,
-  chatId: string
-) {
-  const dir = screenshotDirectory(chatId)
-  let files
-  try {
-    files = await box.fs.listFiles(dir)
-  } catch (error) {
-    logger.error("Couldn't list screenshots to prune", {
-      error: error instanceof Error ? error.message : String(error),
-    })
-    return
-  }
-  await Promise.all(
-    screenshotsToDelete(files).map(async (name) => {
-      try {
-        await box.fs.deleteFile(
-          screenshotPath(name.slice(0, -".jpg".length), chatId)
-        )
-      } catch (error) {
-        logger.error("Couldn't delete an old screenshot", {
-          error: error instanceof Error ? error.message : String(error),
-        })
+  await saveScreenshot({
+    chatId,
+    id,
+    bytes: Buffer.from(base64, "base64"),
+    mkdir: async (dir) => {
+      const { exitCode, result } = await box.process.executeCommand(
+        mkdirScreenshotCommand(chatId)
+      )
+      if (exitCode !== 0) {
+        throw new Error(result || `Couldn't create ${dir}.`)
       }
-    })
-  )
+    },
+    upload: async (path, bytes) => {
+      await box.fs.uploadFile(Buffer.from(bytes), path)
+    },
+    list: (dir) => box.fs.listFiles(dir),
+    remove: (path) => box.fs.deleteFile(path),
+    listLegacy: async () => {
+      const { exitCode, result } = await box.process.executeCommand(
+        "find /tmp -maxdepth 1 -type f -name 'meepo-screenshot-*.jpg'"
+      )
+      if (exitCode !== 0) {
+        throw new Error(result || "Couldn't list old screenshots.")
+      }
+      return result
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((file) => ({ name: file.slice(file.lastIndexOf("/") + 1) }))
+    },
+  })
 }
 
 // The bot's tools for working in its Daytona sandbox: a shell, files, and the
@@ -359,8 +338,10 @@ export const sandboxTools = {
     inputSchema: z.object({}),
     execute: async () => {
       const { base64, ...screen } = await screenshot()
-      const id = crypto.randomUUID()
-      await storeScreenshot(await sandbox(), activeChat.id, id, base64)
+      const id = newScreenshotId()
+      const chatId = activeChat.id
+      await storeScreenshot(await sandbox(), chatId, id, base64)
+      screenshotCache.remember(chatId, id, base64)
       return { id, ...screen }
     },
   }),
