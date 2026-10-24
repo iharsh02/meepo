@@ -1,5 +1,7 @@
 import { Daytona, DaytonaNotFoundError, type Sandbox } from "@daytona/sdk"
 
+import { waitUntilDesktopActive } from "@/lib/desktop"
+
 // Server-only Daytona client, configured from DAYTONA_API_KEY and DAYTONA_API_URL.
 // Both are passed explicitly: the SDK refuses to start when a .env file in the
 // working directory sets DAYTONA_API_URL (as Next.js and `trigger dev` load it)
@@ -52,6 +54,14 @@ export async function getRunningSandbox(sandboxId: string) {
   return sandbox
 }
 
+// The sandbox when it is already started. Never starts, resumes, or waits.
+// Reloading a screenshot uses this: a stopped desktop would come back blank,
+// and a text reply must not boot the machine to find that out.
+export async function getStartedSandbox(sandboxId: string) {
+  const sandbox = await daytona.get(sandboxId)
+  return sandbox.state === "started" ? sandbox : null
+}
+
 // What the chat's side panel shows about a sandbox, without starting it:
 // its state ("started", "stopped", ...), region, and size (memory and disk in
 // GB).
@@ -64,8 +74,13 @@ export async function getSandboxInfo(sandboxId: string) {
 // any mouse, keyboard or screenshot call. It's checked every time rather than
 // remembered, because the desktop stops whenever the sandbox does.
 export async function startDesktop(sandbox: Sandbox) {
-  const { status } = await sandbox.computerUse.getStatus()
-  if (status !== "active") await sandbox.computerUse.start()
+  const status = async () => (await sandbox.computerUse.getStatus()).status
+  if ((await status()) === "active") return
+  await sandbox.computerUse.start()
+  await waitUntilDesktopActive(
+    status,
+    (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  )
 }
 
 // The desktop's size in pixels, which mouse coordinates are measured in.

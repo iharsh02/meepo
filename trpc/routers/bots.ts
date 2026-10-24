@@ -5,6 +5,7 @@ import { z } from "zod"
 import { bots, chatMembers, chats } from "@/db/schema"
 import { botInsertSchema } from "@/db/validation"
 import { createSandbox, deleteSandbox } from "@/lib/daytona"
+import { deleteChatScreenshotFiles } from "@/lib/screenshot-files"
 import { createTRPCRouter, protectedProcedure } from "@/trpc/init"
 
 // Bots are always scoped to the signed-in user.
@@ -51,7 +52,10 @@ export const botsRouter = createTRPCRouter({
         })
       if (!bot) {
         await deleteSandbox(sandboxId).catch(() => {})
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Couldn't create the bot." })
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Couldn't create the bot.",
+        })
       }
       return bot
     }),
@@ -67,7 +71,10 @@ export const botsRouter = createTRPCRouter({
         .where(and(eq(bots.id, id), eq(bots.userId, ctx.user.id)))
         .returning()
       if (!bot) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "That bot doesn't exist." })
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "That bot doesn't exist.",
+        })
       }
       return bot
     }),
@@ -83,10 +90,28 @@ export const botsRouter = createTRPCRouter({
         .from(bots)
         .where(and(eq(bots.id, input.id), eq(bots.userId, ctx.user.id)))
       if (!bot) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "That bot doesn't exist." })
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "That bot doesn't exist.",
+        })
       }
 
+      const direct = await ctx.db
+        .select({ id: chats.id })
+        .from(chats)
+        .innerJoin(chatMembers, eq(chatMembers.chatId, chats.id))
+        .where(and(eq(chats.kind, "direct"), eq(chatMembers.botId, bot.id)))
       if (bot.sandboxId) {
+        await deleteChatScreenshotFiles(
+          bot.sandboxId,
+          direct.map((chat) => chat.id)
+        ).catch((cause) => {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Couldn't delete the chat's screenshots. Try again.",
+            cause,
+          })
+        })
         await deleteSandbox(bot.sandboxId).catch((cause) => {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
@@ -96,11 +121,6 @@ export const botsRouter = createTRPCRouter({
         })
       }
       await ctx.db.transaction(async (tx) => {
-        const direct = await tx
-          .select({ id: chats.id })
-          .from(chats)
-          .innerJoin(chatMembers, eq(chatMembers.chatId, chats.id))
-          .where(and(eq(chats.kind, "direct"), eq(chatMembers.botId, bot.id)))
         if (direct.length) {
           await tx.delete(chats).where(
             inArray(

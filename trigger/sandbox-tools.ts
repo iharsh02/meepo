@@ -1,20 +1,31 @@
 import { chat } from "@trigger.dev/sdk/ai"
-import {
-  tool,
-  type InferUITools,
-  type ModelMessage,
-  type UIDataTypes,
-  type UIMessage,
-} from "ai"
+import { tool, type InferUITools, type UIDataTypes, type UIMessage } from "ai"
 import { z } from "zod"
 
-import { getRunningSandbox, screenSize, startDesktop } from "@/lib/daytona"
+import {
+  getRunningSandbox,
+  getStartedSandbox,
+  screenSize,
+  startDesktop,
+} from "@/lib/daytona"
+import {
+  createScreenshotLoader,
+  mkdirScreenshotCommand,
+  newScreenshotId,
+  readScreenshotBytes,
+  saveScreenshot,
+  screenshotCache,
+} from "@/trigger/screenshot-messages"
 
 // The chat's bot's sandbox id, set in the agent's onBoot (trigger/chat.ts) and
 // read by every tool below. Null for a bot made before sandboxes existed.
 export const botSandbox = chat.local<{ id: string | null }>({
   id: "botSandbox",
 })
+
+// The chat these tools are running in, set alongside the sandbox id. Screenshot
+// files are grouped by it so pruning one chat leaves the others alone.
+export const activeChat = chat.local<{ id: string }>({ id: "activeChat" })
 
 async function sandbox() {
   if (!botSandbox.id) throw new Error("This bot has no sandbox.")
@@ -70,11 +81,9 @@ async function screenshot() {
   return { mediaType: "image/jpeg", base64: shot.screenshot, ...screen }
 }
 
-// viewScreen and showScreen are the same tool with different descriptions;
-// they differ only in whether the chat UI shows the image
-// (components/tool-call.tsx). The model sees the screenshot as an image, not
-// base64 text, on this turn and later ones (the tools are also declared on the
-// agent for that).
+// showScreen keeps its image in the tool result so the person can see it.
+// Private viewScreen images live in the sandbox and are loaded only for the
+// model, in prepareScreenshotMessages.
 function screenTool(description: string) {
   return tool({
     description,
@@ -97,45 +106,81 @@ function screenTool(description: string) {
   })
 }
 
-const screenshotRemoved = {
-  type: "text" as const,
-  text: "[Older screenshot removed to save space. Take a new one to see the screen.]",
+// A loader for this turn's prior screenshots. The sandbox is looked up once
+// and only used when it is already started, so a text reply never boots it.
+export function loadScreenshots(signal?: AbortSignal) {
+  const sandboxId = botSandbox.id
+  if (!sandboxId) {
+    return async () => {
+      throw new Error("This bot has no sandbox.")
+    }
+  }
+  const chatId = activeChat.id
+  return createScreenshotLoader({
+    chatId,
+    signal,
+    cache: screenshotCache,
+    lookup: async () => {
+      const box = await getStartedSandbox(sandboxId)
+      if (!box || box.state !== "started") return null
+      return {
+        state: box.state,
+        download: (path, fileSignal) =>
+          readScreenshotBytes(
+            {
+              downloadFile: (file, timeout) =>
+                box.fs.downloadFile(file, timeout),
+              downloadFileStream: (file, options) =>
+                box.fs.downloadFileStream(file, options),
+            },
+            path,
+            fileSignal
+          ),
+      }
+    },
+  })
 }
 
-// For the agent's prepareStep: keeps only the newest `keep` screenshots as
-// images in what the model reads, and swaps older ones for a short note, so a
-// long session doesn't fill the context with stale screens. The saved chat
-// history is untouched.
-export function dropOldScreenshots(messages: ModelMessage[], keep = 2) {
-  let seen = 0
-  return [...messages]
-    .reverse()
-    .map((message): ModelMessage => {
-      if (message.role !== "tool") return message
-      return {
-        ...message,
-        content: message.content.map((part) => {
-          if (part.type !== "tool-result" || part.output.type !== "content") {
-            return part
-          }
-          if (!part.output.value.some((item) => item.type === "file")) {
-            return part
-          }
-          seen += 1
-          if (seen <= keep) return part
-          return {
-            ...part,
-            output: {
-              ...part.output,
-              value: part.output.value.map((item) =>
-                item.type === "file" ? screenshotRemoved : item
-              ),
-            },
-          }
-        }),
+// viewScreen saves into the chat's directory, then drops every file but the
+// newest two. A failure here throws, so the tool never returns an id whose
+// file was not stored. The image is cached only after that succeeds.
+async function storeScreenshot(
+  box: Awaited<ReturnType<typeof sandbox>>,
+  chatId: string,
+  id: string,
+  base64: string
+) {
+  await saveScreenshot({
+    chatId,
+    id,
+    bytes: Buffer.from(base64, "base64"),
+    mkdir: async (dir) => {
+      const { exitCode, result } = await box.process.executeCommand(
+        mkdirScreenshotCommand(chatId)
+      )
+      if (exitCode !== 0) {
+        throw new Error(result || `Couldn't create ${dir}.`)
       }
-    })
-    .reverse()
+    },
+    upload: async (path, bytes) => {
+      await box.fs.uploadFile(Buffer.from(bytes), path)
+    },
+    list: (dir) => box.fs.listFiles(dir),
+    remove: (path) => box.fs.deleteFile(path),
+    listLegacy: async () => {
+      const { exitCode, result } = await box.process.executeCommand(
+        "find /tmp -maxdepth 1 -type f -name 'meepo-screenshot-*.jpg'"
+      )
+      if (exitCode !== 0) {
+        throw new Error(result || "Couldn't list old screenshots.")
+      }
+      return result
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((file) => ({ name: file.slice(file.lastIndexOf("/") + 1) }))
+    },
+  })
 }
 
 // The bot's tools for working in its Daytona sandbox: a shell, files, and the
@@ -287,9 +332,19 @@ export const sandboxTools = {
     },
   }),
 
-  viewScreen: screenTool(
-    "Take a screenshot of your desktop to see what's on it, before and after you use the mouse or keyboard. Only you see it; it isn't shown in the chat."
-  ),
+  viewScreen: tool({
+    description:
+      "Take a screenshot of your desktop to see what's on it, before and after you use the mouse or keyboard. Only you see it; it isn't shown in the chat.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const { base64, ...screen } = await screenshot()
+      const id = newScreenshotId()
+      const chatId = activeChat.id
+      await storeScreenshot(await sandbox(), chatId, id, base64)
+      screenshotCache.remember(chatId, id, base64)
+      return { id, ...screen }
+    },
+  }),
 
   showScreen: screenTool(
     "Take a screenshot of your desktop and show it in the chat. Use it only when the person asks to see your screen or what's on it."

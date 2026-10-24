@@ -1,15 +1,40 @@
 import { chat } from "@trigger.dev/sdk/ai"
-import { asSchema, isStepCount, smoothStream } from "ai"
+import { asSchema, isStepCount, smoothStream, type ModelMessage } from "ai"
 
 import { db } from "@/db"
 import type { Bot } from "@/db/schema"
 import {
+  activeChat,
   botSandbox,
-  dropOldScreenshots,
+  loadScreenshots,
   sandboxTools,
   type BotChatMessage,
   type ContextUsage,
 } from "@/trigger/sandbox-tools"
+import {
+  SCREEN_LOOK_LIMIT,
+  screenLookStreak,
+  STOP_LOOKING,
+} from "@/trigger/screen-loop"
+import { prepareScreenshotMessages } from "@/trigger/screenshot-messages"
+
+type SandboxToolName = keyof typeof sandboxTools
+
+const toolsExceptScreen = (
+  Object.keys(sandboxTools) as SandboxToolName[]
+).filter(
+  (name): name is Exclude<SandboxToolName, "viewScreen" | "showScreen"> =>
+    name !== "viewScreen" && name !== "showScreen"
+)
+
+function withStopLooking(messages: ModelMessage[]): ModelMessage[] {
+  const already = messages.some(
+    (message) => message.role === "user" && message.content === STOP_LOOKING
+  )
+  if (already) return messages
+  const note: ModelMessage = { role: "user", content: STOP_LOOKING }
+  return [...messages, note]
+}
 
 const MODEL = "minimax/minimax-m3.1-flash"
 // MODEL's context window, in tokens.
@@ -27,6 +52,7 @@ export const botChat = chat.withUIMessage<BotChatMessage>().agent({
   onBoot: async ({ chatId }) => {
     const bot = await chatBot(chatId)
     botSandbox.init({ id: bot.sandboxId })
+    activeChat.init({ id: chatId })
   },
   // Runs before every turn, so edits from the side panel's Configure dialog
   // apply from the next message, even in a run that's already going. Sets the
@@ -61,9 +87,22 @@ export const botChat = chat.withUIMessage<BotChatMessage>().agent({
       // The SDK doesn't know this model's limits and would cap replies at 4,096
       // tokens (thinking included) without this.
       maxOutputTokens: 32_000,
-      prepareStep: ({ messages }) => ({
-        messages: dropOldScreenshots(messages),
-      }),
+      prepareStep: async ({ messages, steps }) => {
+        const prepared = await prepareScreenshotMessages(
+          messages,
+          loadScreenshots(signal)
+        )
+        const streak = screenLookStreak(
+          steps.flatMap((step) => step.toolCalls.map((call) => call.toolName))
+        )
+        if (streak < SCREEN_LOOK_LIMIT) return { messages: prepared }
+        // The model is looking without acting. Take the screen tools away
+        // for this step and ask it to report what it sees.
+        return {
+          messages: withStopLooking(prepared),
+          activeTools: toolsExceptScreen,
+        }
+      },
       // Room for a multi-step task (look, click, type, look again) in one turn.
       stopWhen: isStepCount(40),
       // Releases text word by word instead of in uneven provider chunks.
