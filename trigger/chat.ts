@@ -4,8 +4,9 @@ import { asSchema, isStepCount, smoothStream } from "ai"
 import { db } from "@/db"
 import type { Bot } from "@/db/schema"
 import {
+  activeChat,
   botSandbox,
-  loadScreenshot,
+  loadScreenshots,
   sandboxTools,
   type BotChatMessage,
   type ContextUsage,
@@ -28,6 +29,7 @@ export const botChat = chat.withUIMessage<BotChatMessage>().agent({
   onBoot: async ({ chatId }) => {
     const bot = await chatBot(chatId)
     botSandbox.init({ id: bot.sandboxId })
+    activeChat.init({ id: chatId })
   },
   // Runs before every turn, so edits from the side panel's Configure dialog
   // apply from the next message, even in a run that's already going. Sets the
@@ -63,7 +65,10 @@ export const botChat = chat.withUIMessage<BotChatMessage>().agent({
       // tokens (thinking included) without this.
       maxOutputTokens: 32_000,
       prepareStep: async ({ messages }) => ({
-        messages: await prepareScreenshotMessages(messages, loadScreenshot),
+        messages: await prepareScreenshotMessages(
+          messages,
+          loadScreenshots(signal)
+        ),
       }),
       // Room for a multi-step task (look, click, type, look again) in one turn.
       stopWhen: isStepCount(40),

@@ -1,15 +1,32 @@
+import { logger } from "@trigger.dev/sdk"
 import { chat } from "@trigger.dev/sdk/ai"
 import { tool, type InferUITools, type UIDataTypes, type UIMessage } from "ai"
 import { z } from "zod"
 
-import { getRunningSandbox, screenSize, startDesktop } from "@/lib/daytona"
-import { screenshotPath } from "@/trigger/screenshot-messages"
+import {
+  getRunningSandbox,
+  getStartedSandbox,
+  screenSize,
+  startDesktop,
+} from "@/lib/daytona"
+import {
+  createScreenshotLoader,
+  readScreenshotBytes,
+  screenshotDirectory,
+  screenshotPath,
+  screenshotRoot,
+  screenshotsToDelete,
+} from "@/trigger/screenshot-messages"
 
 // The chat's bot's sandbox id, set in the agent's onBoot (trigger/chat.ts) and
 // read by every tool below. Null for a bot made before sandboxes existed.
 export const botSandbox = chat.local<{ id: string | null }>({
   id: "botSandbox",
 })
+
+// The chat these tools are running in, set alongside the sandbox id. Screenshot
+// files are grouped by it so pruning one chat leaves the others alone.
+export const activeChat = chat.local<{ id: string }>({ id: "activeChat" })
 
 async function sandbox() {
   if (!botSandbox.id) throw new Error("This bot has no sandbox.")
@@ -90,11 +107,101 @@ function screenTool(description: string) {
   })
 }
 
-// Reads only generated screenshot paths in this bot's sandbox.
-export async function loadScreenshot(id: string) {
-  const box = await sandbox()
-  const image = await box.fs.downloadFile(screenshotPath(id))
-  return image.toString("base64")
+// A loader for this turn's prior screenshots. The sandbox is looked up once
+// and only used when it is already started, so a text reply never boots it.
+export function loadScreenshots(signal?: AbortSignal) {
+  const sandboxId = botSandbox.id
+  if (!sandboxId) {
+    return async () => {
+      throw new Error("This bot has no sandbox.")
+    }
+  }
+  const chatId = activeChat.id
+  return createScreenshotLoader({
+    chatId,
+    signal,
+    lookup: async () => {
+      const box = await getStartedSandbox(sandboxId)
+      if (!box || box.state !== "started") return null
+      return {
+        state: box.state,
+        download: (path, fileSignal) =>
+          readScreenshotBytes(
+            {
+              downloadFile: (file) => box.fs.downloadFile(file),
+              downloadFileStream: (file, options) =>
+                box.fs.downloadFileStream(file, options),
+            },
+            path,
+            fileSignal
+          ),
+      }
+    },
+  })
+}
+
+// viewScreen saves into the chat's directory, then drops every file but the
+// newest two. Missing files already become a placeholder on the next turn.
+async function storeScreenshot(
+  box: Awaited<ReturnType<typeof sandbox>>,
+  chatId: string,
+  id: string,
+  base64: string
+) {
+  await ensureFolder(box, screenshotRoot)
+  await ensureFolder(box, screenshotDirectory(chatId))
+  await box.fs.uploadFile(
+    Buffer.from(base64, "base64"),
+    screenshotPath(id, chatId)
+  )
+  await pruneScreenshots(box, chatId)
+}
+
+async function ensureFolder(
+  box: Awaited<ReturnType<typeof sandbox>>,
+  path: string
+) {
+  try {
+    await box.fs.listFiles(path)
+  } catch {
+    try {
+      await box.fs.createFolder(path, "755")
+    } catch (error) {
+      logger.warn("Couldn't create a screenshot directory", {
+        path,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+}
+
+async function pruneScreenshots(
+  box: Awaited<ReturnType<typeof sandbox>>,
+  chatId: string
+) {
+  const dir = screenshotDirectory(chatId)
+  let files
+  try {
+    files = await box.fs.listFiles(dir)
+  } catch (error) {
+    logger.error("Couldn't list screenshots to prune", {
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return
+  }
+  await Promise.all(
+    screenshotsToDelete(files).map(async (name) => {
+      try {
+        await box.fs.deleteFile(
+          screenshotPath(name.slice(0, -".jpg".length), chatId)
+        )
+      } catch (error) {
+        logger.error("Couldn't delete an old screenshot", {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    })
+  )
 }
 
 // The bot's tools for working in its Daytona sandbox: a shell, files, and the
@@ -253,8 +360,7 @@ export const sandboxTools = {
     execute: async () => {
       const { base64, ...screen } = await screenshot()
       const id = crypto.randomUUID()
-      const box = await sandbox()
-      await box.fs.uploadFile(Buffer.from(base64, "base64"), screenshotPath(id))
+      await storeScreenshot(await sandbox(), activeChat.id, id, base64)
       return { id, ...screen }
     },
   }),

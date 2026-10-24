@@ -52,6 +52,14 @@ export async function getRunningSandbox(sandboxId: string) {
   return sandbox
 }
 
+// The sandbox when it is already started. Never starts, resumes, or waits.
+// Reloading a screenshot uses this: a stopped desktop would come back blank,
+// and a text reply must not boot the machine to find that out.
+export async function getStartedSandbox(sandboxId: string) {
+  const sandbox = await daytona.get(sandboxId)
+  return sandbox.state === "started" ? sandbox : null
+}
+
 // What the chat's side panel shows about a sandbox, without starting it:
 // its state ("started", "stopped", ...), region, and size (memory and disk in
 // GB).
