@@ -5,3 +5,8 @@ node_modules/
 coverage/
 pnpm-lock.yaml
 .pnpm-store/
+# Vendored code: shadcn, AI Elements, and installed agent skills
+components/ui/
+components/ai-elements/
+.agents/
+.claude/skills/
