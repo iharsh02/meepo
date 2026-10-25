@@ -7,3 +7,6 @@ allowBuilds:
   esbuild: true
   '@depot/cli': false
   protobufjs: false
+
+patchedDependencies:
+  '@trigger.dev/sdk@4.7.5': patches/@trigger.dev__sdk@4.7.5.patch

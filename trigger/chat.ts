@@ -73,6 +73,10 @@ export const botChat = chat.withUIMessage<BotChatMessage>().agent({
       // The SDK doesn't know this model's limits and would cap replies at 4,096
       // tokens (thinking included) without this.
       maxOutputTokens: 32_000,
+      // chat.agent wraps this in the SDK's retainStepMessages, which drops
+      // every tool result after the first on AI SDK 7.
+      // patches/@trigger.dev__sdk@4.7.5.patch fixes it; when upgrading the
+      // SDK, keep the patch until upstream fixes that function.
       prepareStep: async ({ messages, steps }) => {
         const prepared = await prepareAgentStep({
           messages,
@@ -147,7 +151,7 @@ Your tools let you work in it: run shell commands, read, write and list files, a
 
 When the person asks for a screenshot of the desktop or of a web page, send it with showScreen. viewScreen is only for you to look; it is not shown in the chat. Do what the person asked first. Don't close tabs, relaunch apps, or tidy the desktop unless they ask.
 
-Chromium is /usr/bin/chromium. The shell's display is already the desktop (DISPLAY=:0). Launch it once: \`nohup chromium --no-session-restore --new-window <url> > /tmp/chromium.log 2>&1 &\`. If it is already running, open the page with \`chromium <url>\` instead of quitting and starting it again. Redirect a background command's output to a file, or the shell waits until that process exits.`,
+Launch Chromium from the shell once. If it is already running, open a page with \`chromium <url>\` instead of quitting and starting it again.`,
   ]
     .filter(Boolean)
     .join("\n\n")

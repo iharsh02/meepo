@@ -6,31 +6,30 @@ import {
   STOP_LOOKING,
 } from "@/trigger/screen-loop"
 import { prepareScreenshotMessages } from "@/trigger/screenshot-messages"
-import {
-  restoreDroppedStepMessages,
-  type StepHistory,
-} from "@/trigger/step-history"
 
 // How many identical tool calls in a row before the model is told to stop.
 // Two is enough to catch a loop on the step that would make it three.
 const REPEAT_LIMIT = 2
+// Only these give the same answer when called again with the same input.
+// Desktop tools repeat for real: scroll twice, press Tab twice, look again
+// while a page loads.
+const REPEAT_CHECKED = new Set(["bash", "readFile", "writeFile", "listFiles"])
 
 type StepCall = { toolName: string; input: unknown }
 
-export type AgentStep = StepHistory & {
+export type AgentStep = {
   toolCalls: readonly StepCall[]
 }
 
-// Messages for one model step: full tool history, screenshot images, and a
-// note when the model is looking or repeating itself instead of moving on.
+// Messages for one model step: screenshot images, and a note when the model
+// is looking or repeating itself instead of moving on.
 export async function prepareAgentStep(options: {
-  messages: readonly ModelMessage[]
+  messages: ModelMessage[]
   steps: readonly AgentStep[]
   loadScreenshot: (id: string) => Promise<string>
 }) {
-  const restored = restoreDroppedStepMessages(options.messages, options.steps)
   let messages = await prepareScreenshotMessages(
-    restored,
+    options.messages,
     options.loadScreenshot
   )
   const repeat = repeatedCallNote(options.steps)
@@ -58,7 +57,7 @@ export function repeatedCallNote(steps: readonly AgentStep[]) {
   const calls = steps.flatMap((step) => step.toolCalls)
   if (calls.length < REPEAT_LIMIT) return null
   const latest = calls[calls.length - 1]
-  if (!latest) return null
+  if (!latest || !REPEAT_CHECKED.has(latest.toolName)) return null
   const key = callKey(latest)
   let count = 0
   for (let index = calls.length - 1; index >= 0; index--) {
