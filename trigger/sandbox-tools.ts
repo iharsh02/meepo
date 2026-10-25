@@ -8,12 +8,14 @@ import {
   screenSize,
   startDesktop,
 } from "@/lib/daytona"
+import { shownCommandOutput } from "@/trigger/command-output"
 import {
   createScreenshotLoader,
   mkdirScreenshotCommand,
   newScreenshotId,
   readScreenshotBytes,
   saveScreenshot,
+  SCREENSHOT_COMMAND_TIMEOUT_SECONDS,
   screenshotCache,
 } from "@/trigger/screenshot-messages"
 
@@ -156,7 +158,10 @@ async function storeScreenshot(
     bytes: Buffer.from(base64, "base64"),
     mkdir: async (dir) => {
       const { exitCode, result } = await box.process.executeCommand(
-        mkdirScreenshotCommand(chatId)
+        mkdirScreenshotCommand(chatId),
+        undefined,
+        undefined,
+        SCREENSHOT_COMMAND_TIMEOUT_SECONDS
       )
       if (exitCode !== 0) {
         throw new Error(result || `Couldn't create ${dir}.`)
@@ -169,7 +174,10 @@ async function storeScreenshot(
     remove: (path) => box.fs.deleteFile(path),
     listLegacy: async () => {
       const { exitCode, result } = await box.process.executeCommand(
-        "find /tmp -maxdepth 1 -type f -name 'meepo-screenshot-*.jpg'"
+        "find /tmp -maxdepth 1 -type f -name 'meepo-screenshot-*.jpg'",
+        undefined,
+        undefined,
+        SCREENSHOT_COMMAND_TIMEOUT_SECONDS
       )
       if (exitCode !== 0) {
         throw new Error(result || "Couldn't list old screenshots.")
@@ -188,7 +196,7 @@ async function storeScreenshot(
 export const sandboxTools = {
   bash: tool({
     description:
-      "Run a shell command in your sandbox and get its exit code and output. Commands run non-interactively; start long-running processes in the background with output redirected to a file.",
+      "Run a shell command in your sandbox and get its exit code and output. The desktop display is already set (DISPLAY=:0). The shell is zsh, so a glob that matches nothing fails. Commands run non-interactively. Start a long-running app in the background with its output redirected, for example `nohup chromium --no-session-restore --new-window <url> > /tmp/chromium.log 2>&1 &`. Without that redirect the call stays open until the app exits.",
     inputSchema: z.object({
       command: z.string().describe("The shell command to run."),
       cwd: z
@@ -201,10 +209,10 @@ export const sandboxTools = {
       const { exitCode, result } = await box.process.executeCommand(
         command,
         cwd,
-        undefined,
+        { DISPLAY: ":0" },
         120
       )
-      return { exitCode, output: clip(result, 20_000) }
+      return { exitCode, output: shownCommandOutput(result) }
     },
   }),
 
@@ -334,7 +342,7 @@ export const sandboxTools = {
 
   viewScreen: tool({
     description:
-      "Take a screenshot of your desktop to see what's on it, before and after you use the mouse or keyboard. Only you see it; it isn't shown in the chat.",
+      "Take a screenshot of your desktop so you can see it, before and after you click, type, or launch an app. Only you see it. To send a screenshot to the person, including a web page, use showScreen.",
     inputSchema: z.object({}),
     execute: async () => {
       const { base64, ...screen } = await screenshot()
@@ -347,7 +355,7 @@ export const sandboxTools = {
   }),
 
   showScreen: screenTool(
-    "Take a screenshot of your desktop and show it in the chat. Use it only when the person asks to see your screen or what's on it."
+    "Take a screenshot of your desktop and show it in the chat. Use it when the person asks to see the screen or a web page open on it."
   ),
 }
 

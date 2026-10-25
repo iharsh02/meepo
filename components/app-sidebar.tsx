@@ -69,11 +69,15 @@ export function AppSidebar({ bots, user }: { bots: Bot[]; user: SessionUser }) {
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
-            className="flex h-8 items-center gap-2 rounded-md border border-input bg-input/30 px-2 text-sm text-muted-foreground outline-none hover:bg-input/50 focus-visible:ring-3 focus-visible:ring-ring/50 group-data-[collapsible=icon]:size-12 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:text-sidebar-foreground group-data-[collapsible=icon]:hover:bg-sidebar-accent"
+            className="flex h-8 items-center gap-2 rounded-md border border-input bg-input/30 px-2 text-sm text-muted-foreground outline-none group-data-[collapsible=icon]:size-12 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:text-sidebar-foreground hover:bg-input/50 group-data-[collapsible=icon]:hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <SearchIcon className="size-4 group-data-[collapsible=icon]:size-5" />
-            <span className="group-data-[collapsible=icon]:sr-only">Search</span>
-            <span className="ml-auto text-xs group-data-[collapsible=icon]:hidden">⌘K</span>
+            <span className="group-data-[collapsible=icon]:sr-only">
+              Search
+            </span>
+            <span className="ml-auto text-xs group-data-[collapsible=icon]:hidden">
+              ⌘K
+            </span>
           </button>
         </SidebarHeader>
 
@@ -91,7 +95,9 @@ export function AppSidebar({ bots, user }: { bots: Bot[]; user: SessionUser }) {
                   <BotFace seed={bot.avatar} />
                   <div className="flex min-w-0 flex-1 flex-col">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="leading-4.5 font-medium">{bot.name}</span>
+                      <span className="leading-4.5 font-medium">
+                        {bot.name}
+                      </span>
                       <span className="text-xs text-muted-foreground">
                         {formatDistanceToNowStrict(bot.createdAt)}
                       </span>
@@ -129,7 +135,7 @@ function NavUser({ user }: { user: SessionUser }) {
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <SidebarMenuButton className="h-10 gap-2 rounded-sm font-medium data-popup-open:bg-sidebar-accent group-data-[collapsible=icon]:mx-auto" />
+              <SidebarMenuButton className="h-10 gap-2 rounded-sm font-medium group-data-[collapsible=icon]:mx-auto data-popup-open:bg-sidebar-accent" />
             }
           >
             <UserAvatar user={user} />
@@ -146,7 +152,9 @@ function NavUser({ user }: { user: SessionUser }) {
                 <UserAvatar user={user} className="size-8" />
                 <div className="grid min-w-0 leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
-                  <span className="truncate text-muted-foreground">{user.email}</span>
+                  <span className="truncate text-muted-foreground">
+                    {user.email}
+                  </span>
                 </div>
               </DropdownMenuLabel>
             </DropdownMenuGroup>
@@ -169,7 +177,13 @@ function NavUser({ user }: { user: SessionUser }) {
 }
 
 // GitHub avatar, falling back to the first letter of the name.
-function UserAvatar({ user, className }: { user: SessionUser; className?: string }) {
+function UserAvatar({
+  user,
+  className,
+}: {
+  user: SessionUser
+  className?: string
+}) {
   return (
     <Avatar size="sm" className={cn("after:hidden", className)}>
       {user.image && <AvatarImage src={user.image} alt="" />}

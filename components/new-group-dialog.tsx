@@ -44,13 +44,20 @@ export function NewGroupDialog({ bots }: { bots: Bot[] }) {
 
           <Field>
             <FieldLabel htmlFor="group-name">Name</FieldLabel>
-            <Input id="group-name" name="name" placeholder="Weekend plans" required />
+            <Input
+              id="group-name"
+              name="name"
+              placeholder="Weekend plans"
+              required
+            />
           </Field>
 
           <fieldset className="flex flex-col gap-3">
             <legend className="mb-2.5 font-medium">Bots</legend>
             {bots.length === 0 && (
-              <p className="text-muted-foreground">No bots yet. Create one first.</p>
+              <p className="text-muted-foreground">
+                No bots yet. Create one first.
+              </p>
             )}
             {bots.map((bot) => (
               <Label key={bot.id} className="gap-2 font-normal">
@@ -62,7 +69,9 @@ export function NewGroupDialog({ bots }: { bots: Bot[] }) {
           </fieldset>
 
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+            <DialogClose render={<Button variant="outline" />}>
+              Cancel
+            </DialogClose>
             <Button type="submit">Create group</Button>
           </DialogFooter>
         </form>

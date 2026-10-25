@@ -1,5 +1,5 @@
 import { chat } from "@trigger.dev/sdk/ai"
-import { asSchema, isStepCount, smoothStream, type ModelMessage } from "ai"
+import { asSchema, isStepCount, smoothStream } from "ai"
 
 import { db } from "@/db"
 import type { Bot } from "@/db/schema"
@@ -11,12 +11,7 @@ import {
   type BotChatMessage,
   type ContextUsage,
 } from "@/trigger/sandbox-tools"
-import {
-  SCREEN_LOOK_LIMIT,
-  screenLookStreak,
-  STOP_LOOKING,
-} from "@/trigger/screen-loop"
-import { prepareScreenshotMessages } from "@/trigger/screenshot-messages"
+import { prepareAgentStep } from "@/trigger/prepare-step"
 
 type SandboxToolName = keyof typeof sandboxTools
 
@@ -26,15 +21,6 @@ const toolsExceptScreen = (
   (name): name is Exclude<SandboxToolName, "viewScreen" | "showScreen"> =>
     name !== "viewScreen" && name !== "showScreen"
 )
-
-function withStopLooking(messages: ModelMessage[]): ModelMessage[] {
-  const already = messages.some(
-    (message) => message.role === "user" && message.content === STOP_LOOKING
-  )
-  if (already) return messages
-  const note: ModelMessage = { role: "user", content: STOP_LOOKING }
-  return [...messages, note]
-}
 
 const MODEL = "minimax/minimax-m3.1-flash"
 // MODEL's context window, in tokens.
@@ -87,19 +73,22 @@ export const botChat = chat.withUIMessage<BotChatMessage>().agent({
       // The SDK doesn't know this model's limits and would cap replies at 4,096
       // tokens (thinking included) without this.
       maxOutputTokens: 32_000,
+      // chat.agent wraps this in the SDK's retainStepMessages, which drops
+      // every tool result after the first on AI SDK 7.
+      // patches/@trigger.dev__sdk@4.7.5.patch fixes it; when upgrading the
+      // SDK, keep the patch until upstream fixes that function.
       prepareStep: async ({ messages, steps }) => {
-        const prepared = await prepareScreenshotMessages(
+        const prepared = await prepareAgentStep({
           messages,
-          loadScreenshots(signal)
-        )
-        const streak = screenLookStreak(
-          steps.flatMap((step) => step.toolCalls.map((call) => call.toolName))
-        )
-        if (streak < SCREEN_LOOK_LIMIT) return { messages: prepared }
+          steps,
+          loadScreenshot: loadScreenshots(signal),
+        })
         // The model is looking without acting. Take the screen tools away
-        // for this step and ask it to report what it sees.
+        // for this step; the note asking it to report what it sees is already
+        // on the messages.
+        if (!prepared.hideScreenTools) return { messages: prepared.messages }
         return {
-          messages: withStopLooking(prepared),
+          messages: prepared.messages,
           activeTools: toolsExceptScreen,
         }
       },
@@ -158,7 +147,11 @@ ${bot.instructions}`,
       `# Your environment
 You have your own sandbox: an isolated Linux computer with a desktop, hosted on Daytona, that belongs to you alone. It was set up when you were created, it stays with you across conversations, and it is removed if you are deleted.
 
-Your tools let you work in it: run shell commands, read, write and list files, and use the desktop's mouse and keyboard. Look at the screen before you click or type, and again afterwards to check the result. Show the person your screen only when they ask to see it. Never claim you did something in the sandbox without using a tool to do it.`,
+Your tools let you work in it: run shell commands, read, write and list files, and use the desktop's mouse and keyboard. Do web tasks in Chromium on that desktop. Look at the screen before you click or type, after you do, and after you launch an app from the shell. Never claim you did something in the sandbox without using a tool to do it.
+
+When the person asks for a screenshot of the desktop or of a web page, send it with showScreen. viewScreen is only for you to look; it is not shown in the chat. Do what the person asked first. Don't close tabs, relaunch apps, or tidy the desktop unless they ask.
+
+Launch Chromium from the shell once. If it is already running, open a page with \`chromium <url>\` instead of quitting and starting it again.`,
   ]
     .filter(Boolean)
     .join("\n\n")

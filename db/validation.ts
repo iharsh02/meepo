@@ -8,9 +8,15 @@ import { bots } from "@/db/schema"
 // the server. Shared by the New bot form (client) and bots.create (server).
 export const botInsertSchema = createInsertSchema(bots, {
   name: (schema) =>
-    schema.trim().min(1, "Give your bot a name.").max(50, "Keep the name under 50 characters."),
+    schema
+      .trim()
+      .min(1, "Give your bot a name.")
+      .max(50, "Keep the name under 50 characters."),
   job: (schema) =>
-    schema.trim().min(1, "Say what the bot is for.").max(80, "Keep the job under 80 characters."),
+    schema
+      .trim()
+      .min(1, "Say what the bot is for.")
+      .max(80, "Keep the job under 80 characters."),
   instructions: (schema) =>
     schema
       .trim()

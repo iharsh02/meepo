@@ -1,0 +1,26 @@
+diff --git a/dist/commonjs/v3/steeringContext.js b/dist/commonjs/v3/steeringContext.js
+index 7d4762908ed7550e6ecb67714e9a9a9adead22b7..93f70ade913629a8611f27fc8dc06f86db1c47a5 100644
+--- a/dist/commonjs/v3/steeringContext.js
++++ b/dist/commonjs/v3/steeringContext.js
+@@ -20,7 +20,7 @@ function retainStepMessages(prepare) {
+             responseCount = 0;
+         }
+         const responses = input.steps.at(-1)?.response.messages ?? [];
+-        const messages = retained ? [...retained, ...responses.slice(responseCount)] : input.messages;
++        const messages = retained ? [...retained, ...responses] : input.messages;
+         const result = await prepare({ ...input, messages });
+         retained = result?.messages ?? (retained ? messages : undefined);
+         responseCount = responses.length;
+diff --git a/dist/esm/v3/steeringContext.js b/dist/esm/v3/steeringContext.js
+index c2cd85e430262628073665d38dcad4180fccf9dd..78ba521ba5e5157f919785842a167f92ab5af29e 100644
+--- a/dist/esm/v3/steeringContext.js
++++ b/dist/esm/v3/steeringContext.js
+@@ -15,7 +15,7 @@ export function retainStepMessages(prepare) {
+             responseCount = 0;
+         }
+         const responses = input.steps.at(-1)?.response.messages ?? [];
+-        const messages = retained ? [...retained, ...responses.slice(responseCount)] : input.messages;
++        const messages = retained ? [...retained, ...responses] : input.messages;
+         const result = await prepare({ ...input, messages });
+         retained = result?.messages ?? (retained ? messages : undefined);
+         responseCount = responses.length;

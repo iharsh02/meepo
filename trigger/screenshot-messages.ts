@@ -20,6 +20,8 @@ const CACHED_SCREENSHOTS = 4
 const CACHED_CHATS = 32
 // Daytona's download helpers otherwise wait 30 minutes.
 export const SCREENSHOT_DOWNLOAD_TIMEOUT_SECONDS = 15
+// mkdir, find, and rm. executeCommand otherwise keeps the client's 24 hour wait.
+export const SCREENSHOT_COMMAND_TIMEOUT_SECONDS = 15
 
 const OLDER =
   "[Older screenshot removed to save space. Take a new one to see the screen.]"

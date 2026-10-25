@@ -6,7 +6,12 @@ import { PlusIcon, ShuffleIcon } from "lucide-react"
 import { nanoid } from "nanoid"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { Controller, useForm, useWatch, type UseFormReturn } from "react-hook-form"
+import {
+  Controller,
+  useForm,
+  useWatch,
+  type UseFormReturn,
+} from "react-hook-form"
 
 import { createBotAction, updateBotAction } from "@/app/(app)/actions"
 import { BotFace } from "@/components/bot-face"
@@ -108,10 +113,16 @@ function NewBotForm() {
   }
 
   return (
-    <form className="flex flex-col gap-4" onSubmit={form.handleSubmit(onSubmit)} noValidate>
+    <form
+      className="flex flex-col gap-4"
+      onSubmit={form.handleSubmit(onSubmit)}
+      noValidate
+    >
       <DialogHeader>
         <DialogTitle>New bot</DialogTitle>
-        <DialogDescription>Give it a face, a name, and a job to do.</DialogDescription>
+        <DialogDescription>
+          Give it a face, a name, and a job to do.
+        </DialogDescription>
       </DialogHeader>
 
       <div className="flex flex-wrap gap-2">
@@ -123,7 +134,10 @@ function NewBotForm() {
             size="sm"
             className="rounded-full"
             onClick={() => {
-              form.setValue("job", preset.job, { shouldDirty: true, shouldValidate: true })
+              form.setValue("job", preset.job, {
+                shouldDirty: true,
+                shouldValidate: true,
+              })
               form.setValue("instructions", preset.instructions, {
                 shouldDirty: true,
                 shouldValidate: true,
@@ -157,7 +171,9 @@ export function ConfigureBotButton({ bot }: { bot: Bot }) {
   const [open, setOpen] = useState(false)
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="ghost" size="sm" />}>Configure</DialogTrigger>
+      <DialogTrigger render={<Button variant="ghost" size="sm" />}>
+        Configure
+      </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <ConfigureBotForm bot={bot} onSaved={() => setOpen(false)} />
       </DialogContent>
@@ -188,10 +204,16 @@ function ConfigureBotForm({ bot, onSaved }: { bot: Bot; onSaved: () => void }) {
   }
 
   return (
-    <form className="flex flex-col gap-4" onSubmit={form.handleSubmit(onSubmit)} noValidate>
+    <form
+      className="flex flex-col gap-4"
+      onSubmit={form.handleSubmit(onSubmit)}
+      noValidate
+    >
       <DialogHeader>
         <DialogTitle>Configure {bot.name}</DialogTitle>
-        <DialogDescription>Changes apply from your next message.</DialogDescription>
+        <DialogDescription>
+          Changes apply from your next message.
+        </DialogDescription>
       </DialogHeader>
 
       <FieldGroup>
@@ -220,7 +242,9 @@ function BotFields({ form }: { form: UseFormReturn<BotInsert> }) {
         <BotFace seed={avatar} className="size-14" />
         <FieldContent>
           <FieldTitle>Face</FieldTitle>
-          <FieldDescription>Shuffle until you find one you like.</FieldDescription>
+          <FieldDescription>
+            Shuffle until you find one you like.
+          </FieldDescription>
         </FieldContent>
         <Button
           type="button"
@@ -274,7 +298,9 @@ function BotFields({ form }: { form: UseFormReturn<BotInsert> }) {
         control={form.control}
         render={({ field, fieldState }) => (
           <Field data-invalid={fieldState.invalid}>
-            <FieldLabel htmlFor="bot-instructions">How it should work</FieldLabel>
+            <FieldLabel htmlFor="bot-instructions">
+              How it should work
+            </FieldLabel>
             <Textarea
               {...field}
               value={field.value ?? ""}
