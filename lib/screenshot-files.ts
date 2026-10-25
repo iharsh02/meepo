@@ -1,5 +1,8 @@
 import { getStartedSandbox } from "@/lib/daytona"
-import { removeChatScreenshots } from "@/trigger/screenshot-messages"
+import {
+  removeChatScreenshots,
+  SCREENSHOT_COMMAND_TIMEOUT_SECONDS,
+} from "@/trigger/screenshot-messages"
 
 // Deletes a chat's screenshots when that chat is going away and the sandbox
 // is already running. A stopped sandbox is left alone: deleting it removes
@@ -13,7 +16,12 @@ export async function deleteChatScreenshotFiles(
   if (!box) return
   await removeChatScreenshots(chatIds, {
     async run(command) {
-      const { exitCode, result } = await box.process.executeCommand(command)
+      const { exitCode, result } = await box.process.executeCommand(
+        command,
+        undefined,
+        undefined,
+        SCREENSHOT_COMMAND_TIMEOUT_SECONDS
+      )
       return { exitCode: exitCode ?? 1, result }
     },
     async remove(path) {
