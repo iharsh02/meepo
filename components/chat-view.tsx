@@ -60,6 +60,7 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { ToolCall, toolActivity } from "@/components/tool-call"
 import type { Bot } from "@/db/schema"
+import { emptyGroupMessage, shownChatError } from "@/lib/chat-errors"
 import type { botChat } from "@/trigger/chat"
 import type { BotChatMessage } from "@/trigger/sandbox-tools"
 
@@ -67,13 +68,17 @@ import type { BotChatMessage } from "@/trigger/sandbox-tools"
 // space under the chat page's header. Replies stream from the bot-chat agent
 // in trigger/chat.ts, which keeps the history under `chatId`; it's loaded back
 // on open. Key it by chat id so switching bots starts fresh. Pass a group
-// chat's `bots` to show a picker in the composer for which bot answers.
+// chat's `bots` to show a picker in the composer for which bot answers, and
+// each reply's face. `empty` is a group whose bots are all gone: history
+// still loads, and the composer stays disabled so sending can't start a turn.
 export function ChatView({
   chatId,
   bots = [],
+  empty = false,
 }: {
   chatId: string
   bots?: ChatBot[]
+  empty?: boolean
 }) {
   const transport = useTriggerChatTransport<typeof botChat>({
     task: "bot-chat",
@@ -113,6 +118,7 @@ export function ChatView({
           transport={transport}
           initialMessages={transcript.messages}
           bots={bots}
+          empty={empty}
         />
       )}
     </div>
@@ -127,11 +133,13 @@ function Conversation({
   transport,
   initialMessages,
   bots,
+  empty,
 }: {
   chatId: string
   transport: TriggerChatTransport
   initialMessages: BotChatMessage[]
   bots: ChatBot[]
+  empty: boolean
 }) {
   const { messages, sendMessage, regenerate, stop, status, error } = useChat({
     id: chatId,
@@ -173,8 +181,9 @@ function Conversation({
                     streaming={
                       status === "streaming" && index === messages.length - 1
                     }
+                    bots={bots}
                     onRegenerate={
-                      index === messages.length - 1 && !busy
+                      !empty && index === messages.length - 1 && !busy
                         ? () => regenerate({ messageId: message.id, metadata })
                         : undefined
                     }
@@ -186,9 +195,14 @@ function Conversation({
                   {`${activityLabel}…`}
                 </Shimmer>
               )}
+              {empty && (
+                <p className="text-center text-sm text-foreground">
+                  {emptyGroupMessage}
+                </p>
+              )}
               {error && (
                 <p className="text-center text-sm text-destructive">
-                  Something went wrong. Try sending that again.
+                  {shownChatError(error)}
                 </p>
               )}
             </MessageScrollerContent>
@@ -199,7 +213,11 @@ function Conversation({
 
       <Composer
         busy={busy}
-        onSend={(text) => sendMessage({ text }, { metadata })}
+        disabled={empty}
+        onSend={(text) => {
+          if (empty) return
+          sendMessage({ text }, { metadata })
+        }}
         onStop={stopReply}
       >
         {bots.length > 1 && botId && (
@@ -241,10 +259,12 @@ function activity(messages: BotChatMessage[], status: ChatStatus) {
 // arriving; its actions appear once it's done.
 function ChatMessage({
   message,
+  bots,
   streaming,
   onRegenerate,
 }: {
   message: BotChatMessage
+  bots: ChatBot[]
   streaming: boolean
   onRegenerate?: () => void
 }) {
@@ -282,9 +302,15 @@ function ChatMessage({
     } catch {}
   }
 
+  const speaker = speakerFor(message, bots)
+
   return (
-    <Message>
+    <Message className={speaker ? "items-start" : undefined}>
+      {speaker && <BotFace seed={speaker.avatar} className="mt-0.5 size-6" />}
       <MessageContent className="gap-3">
+        {speaker && (
+          <span className="text-sm leading-5 font-medium">{speaker.name}</span>
+        )}
         {message.parts.map((part, index) => {
           if (part.type === "reasoning" && part.text) {
             return (
@@ -329,15 +355,34 @@ function ChatMessage({
 
 type ChatBot = Pick<Bot, "id" | "name" | "avatar">
 
+// The bot that wrote an assistant reply, in a group of two or more. Direct
+// chats pass no bots, so their replies stay unlabeled. A bot that has since
+// left still shows, from the name and face saved on the message.
+function speakerFor(message: BotChatMessage, bots: ChatBot[]) {
+  if (bots.length < 2 || message.role !== "assistant") return undefined
+  const id = message.metadata?.botId
+  const known = id ? bots.find((bot) => bot.id === id) : undefined
+  if (known) return known
+  const name = message.metadata?.botName
+  if (!name) return undefined
+  return {
+    id: id ?? name,
+    name,
+    avatar: message.metadata?.botAvatar ?? name,
+  }
+}
+
 // Enter sends, Shift+Enter adds a newline. While `busy` sending waits and the
 // send button becomes Stop. `children` sit in the toolbar after the menu.
 function Composer({
   busy,
+  disabled = false,
   onSend,
   onStop,
   children,
 }: {
   busy: boolean
+  disabled?: boolean
   onSend: (text: string) => void
   onStop: () => void
   children?: ReactNode
@@ -346,7 +391,7 @@ function Composer({
 
   function send() {
     const trimmed = text.trim()
-    if (!trimmed || busy) return
+    if (!trimmed || busy || disabled) return
     onSend(trimmed)
     setText("")
   }
@@ -361,7 +406,10 @@ function Composer({
     >
       <InputGroup className="dark:bg-input/80">
         <InputGroupTextarea
-          placeholder="What would you like to know?"
+          placeholder={
+            disabled ? emptyGroupMessage : "What would you like to know?"
+          }
+          disabled={disabled}
           className="max-h-48 min-h-10"
           value={text}
           onChange={(event) => setText(event.target.value)}
@@ -392,7 +440,7 @@ function Composer({
               variant="default"
               size="icon-sm"
               className="ml-auto rounded-lg"
-              disabled={!text.trim()}
+              disabled={disabled || !text.trim()}
             >
               <CornerDownLeftIcon />
               <span className="sr-only">Send</span>

@@ -121,7 +121,9 @@ function NewGroupForm({ bots }: { bots: Bot[] }) {
                       onCheckedChange={(checked) =>
                         field.onChange(
                           checked
-                            ? [...field.value, bot.id]
+                            ? field.value.includes(bot.id)
+                              ? field.value
+                              : [...field.value, bot.id]
                             : field.value.filter((id) => id !== bot.id)
                         )
                       }

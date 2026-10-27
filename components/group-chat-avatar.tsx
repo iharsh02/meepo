@@ -1,3 +1,5 @@
+import { UsersIcon } from "lucide-react"
+
 import { BotFace } from "@/components/bot-face"
 import type { Bot } from "@/db/schema"
 import { cn } from "@/lib/utils"
@@ -36,6 +38,19 @@ export function GroupChatAvatar({
   bots: Pick<Bot, "id" | "avatar">[]
   className?: string
 }) {
+  if (bots.length === 0) {
+    return (
+      <div
+        className={cn(
+          "flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-foreground",
+          className
+        )}
+      >
+        <UsersIcon className="size-1/2" />
+      </div>
+    )
+  }
+
   const faces = bots.slice(0, 3)
   const rest = bots.length - faces.length
   const layout = layouts[faces.length + (rest > 0 ? 1 : 0)] ?? []

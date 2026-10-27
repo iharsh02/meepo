@@ -39,38 +39,69 @@ export const chatsRouter = createTRPCRouter({
     }),
 
   // Creates a group chat with some of the user's bots. Rejects bot ids that
-  // aren't theirs, so the browser can't add someone else's bot.
+  // aren't theirs, so the browser can't add someone else's bot. The ownership
+  // check locks those rows in the same transaction as the insert, so a bot
+  // deleted in between can't land as a raw foreign-key error.
   createGroup: protectedProcedure
     .input(groupChatInsertSchema)
     .mutation(async ({ ctx, input }) => {
       const botIds = [...new Set(input.botIds)]
-      const owned = await ctx.db
-        .select({ id: bots.id })
-        .from(bots)
-        .where(and(inArray(bots.id, botIds), eq(bots.userId, ctx.user.id)))
-      if (owned.length !== botIds.length) {
+      if (botIds.length !== input.botIds.length) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Some of those bots don't exist anymore. Reopen the form.",
+          message: "Each bot can only be added once.",
+        })
+      }
+      if (botIds.length < 2) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Pick at least two different bots.",
         })
       }
 
-      return ctx.db.transaction(async (tx) => {
-        const [chat] = await tx
-          .insert(chats)
-          .values({ userId: ctx.user.id, kind: "group", name: input.name })
-          .returning({ id: chats.id })
-        if (!chat) {
+      try {
+        return await ctx.db.transaction(async (tx) => {
+          // Lock in id order so two creates can't deadlock on the same bots.
+          const owned = await tx
+            .select({ id: bots.id })
+            .from(bots)
+            .where(and(inArray(bots.id, botIds), eq(bots.userId, ctx.user.id)))
+            .orderBy(asc(bots.id))
+            .for("update")
+          if (owned.length !== botIds.length) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "Some of those bots don't exist anymore. Reopen the form.",
+            })
+          }
+
+          const [chat] = await tx
+            .insert(chats)
+            .values({ userId: ctx.user.id, kind: "group", name: input.name })
+            .returning({ id: chats.id })
+          if (!chat) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Couldn't create the group.",
+            })
+          }
+          await tx
+            .insert(chatMembers)
+            .values(botIds.map((botId) => ({ chatId: chat.id, botId })))
+          return chat
+        })
+      } catch (error) {
+        if (error instanceof TRPCError) throw error
+        if (isForeignKeyViolation(error)) {
           throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Couldn't create the group.",
+            code: "BAD_REQUEST",
+            message: "Some of those bots don't exist anymore. Reopen the form.",
+            cause: error,
           })
         }
-        await tx
-          .insert(chatMembers)
-          .values(botIds.map((botId) => ({ chatId: chat.id, botId })))
-        return chat
-      })
+        throw error
+      }
     }),
 
   // The direct chat with one of the user's bots, created on first open.
@@ -118,3 +149,16 @@ export const chatsRouter = createTRPCRouter({
       })
     }),
 })
+
+// A bot row disappearing between the lock and the insert. Drizzle wraps the
+// postgres error, so the code may sit on `cause` rather than the error itself.
+function isForeignKeyViolation(error: unknown) {
+  const seen = new Set<unknown>()
+  let current = error
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current)
+    if ("code" in current && current.code === "23503") return true
+    current = "cause" in current ? current.cause : undefined
+  }
+  return false
+}

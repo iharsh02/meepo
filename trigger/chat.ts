@@ -4,6 +4,8 @@ import { z } from "zod"
 
 import { db } from "@/db"
 import type { Bot } from "@/db/schema"
+import { botNotInGroupMessage, emptyGroupMessage } from "@/lib/chat-errors"
+import { attributeOtherBots } from "@/trigger/group-messages"
 import {
   activeChat,
   botSandbox,
@@ -22,6 +24,15 @@ const toolsExceptScreen = (
   (name): name is Exclude<SandboxToolName, "viewScreen" | "showScreen"> =>
     name !== "viewScreen" && name !== "showScreen"
 )
+
+// Who is answering this turn, and the other members when it's a group. Set in
+// onTurnStart and read in run, so other bots' history can be labeled without
+// another query. Direct chats leave `group` false and their messages alone.
+const groupTurn = chat.local<{
+  botId: string
+  group: boolean
+  members: { id: string; name: string }[]
+}>({ id: "groupTurn" })
 
 const MODEL = "minimax/minimax-m3.1-flash"
 // MODEL's context window, in tokens.
@@ -42,9 +53,18 @@ export const botChat = chat
     // Runs on every fresh worker (the first run and continuations): stores the
     // bot's sandbox id, read by the tools.
     onBoot: async ({ chatId, clientData }) => {
-      const bot = await chatBot(chatId, clientData?.botId)
-      botSandbox.init({ id: bot.sandboxId })
       activeChat.init({ id: chatId })
+      groupTurn.init({ botId: "", group: false, members: [] })
+      try {
+        const { bot } = await chatBot(chatId, clientData?.botId)
+        botSandbox.init({ id: bot.sandboxId })
+      } catch (error) {
+        // A missing member fails the turn (onTurnStart), where the client can
+        // show it. Failing here would kill the run before that message exists.
+        botSandbox.init({ id: null })
+        if (isUserFacingChatError(error)) return
+        throw error
+      }
     },
     // Runs before every turn, so edits from the side panel's Configure dialog
     // apply from the next message, even in a run that's already going, and a
@@ -53,31 +73,50 @@ export const botChat = chat
     // handed to `run`), and attaches the context usage to the reply after each
     // step.
     onTurnStart: async ({ chatId, clientData }) => {
-      const bot = await chatBot(chatId, clientData?.botId)
+      const { bot, members, group } = await chatBot(chatId, clientData?.botId)
       botSandbox.id = bot.sandboxId
-      const prompt = botInstructions(bot)
+      const inGroup = group && members.length > 1
+      groupTurn.botId = bot.id
+      groupTurn.group = inGroup
+      groupTurn.members = members.map((member) => ({
+        id: member.id,
+        name: member.name,
+      }))
+      const prompt = botInstructions(bot, inGroup ? members : undefined)
       chat.prompt.set(prompt)
       const fixed = {
         window: CONTEXT_WINDOW,
         system: estimateTokens(prompt),
         tools: await toolTokens(),
       }
+      const speaker = inGroup
+        ? { botId: bot.id, botName: bot.name, botAvatar: bot.avatar }
+        : undefined
       chat.setUIMessageStreamOptions({
         messageMetadata: ({ part }) => {
+          if (part.type === "start") return speaker
           if (part.type !== "finish-step") return undefined
           const { inputTokens = 0, outputTokens = 0 } = part.usage
           const context: ContextUsage = {
             ...fixed,
             used: inputTokens + outputTokens,
           }
-          return { context }
+          return speaker ? { ...speaker, context } : { context }
         },
       })
     },
     run: async ({ messages, tools, signal, streamText }) =>
       streamText({
         model: MODEL,
-        messages,
+        messages:
+          groupTurn.group && groupTurn.botId
+            ? attributeOtherBots(
+                messages,
+                chat.history.all(),
+                groupTurn.botId,
+                groupTurn.members
+              )
+            : messages,
         tools,
         abortSignal: signal,
         // The SDK doesn't know this model's limits and would cap replies at 4,096
@@ -109,18 +148,44 @@ export const botChat = chat
       }),
   })
 
-// The bot that answers in a chat: the one with `botId` when it's a member,
-// else the chat's oldest bot (a direct chat's only bot). `botId` comes from the
-// browser, so it only ever picks among the chat's own members.
+// Thrown for a missing member the person can act on. Other failures stay
+// ordinary Errors so the chat UI can tell them apart.
+class ChatBotError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ChatBotError"
+  }
+}
+
+function isUserFacingChatError(error: unknown) {
+  return (
+    error instanceof ChatBotError &&
+    (error.message === botNotInGroupMessage ||
+      error.message === emptyGroupMessage)
+  )
+}
+
+// The bot that answers in a chat. With no `botId`, that's the oldest member
+// (a direct chat's only bot). A `botId` that isn't a member is an error: the
+// browser asked for that bot, and a different one must not answer instead.
 async function chatBot(chatId: string, botId?: string) {
   const found = await db.query.chats.findFirst({
     where: { id: chatId },
     with: { bots: { orderBy: { createdAt: "asc" } } },
   })
-  const bot =
-    found?.bots.find((member) => member.id === botId) ?? found?.bots[0]
-  if (!bot) throw new Error(`No bot in chat ${chatId}`)
-  return bot
+  const members = found?.bots ?? []
+  const group = found?.kind === "group"
+  if (botId) {
+    const bot = members.find((member) => member.id === botId)
+    if (!bot) throw new ChatBotError(botNotInGroupMessage)
+    return { bot, members, group }
+  }
+  const bot = members[0]
+  if (!bot) {
+    if (group) throw new ChatBotError(emptyGroupMessage)
+    throw new Error(`No bot in chat ${chatId}`)
+  }
+  return { bot, members, group }
 }
 
 // A rough token count, at about 4 characters a token. Only used to split the
@@ -143,7 +208,9 @@ async function toolTokens() {
 
 // A bot's base system prompt: who it is, its job and purpose, and the sandbox
 // it lives in. Sections without data (no instructions, no sandbox) are left out.
-function botInstructions(bot: Bot) {
+// Pass `members` only for a group of two or more; a direct chat omits it, so
+// its prompt stays the sections below.
+function botInstructions(bot: Bot, members?: Bot[]) {
   return [
     `# Who you are
 You are ${bot.name}, a bot in Meepo. Meepo is an app where a person creates their own bots, each with its own job, and talks with them. The person in this conversation created you.`,
@@ -165,7 +232,25 @@ Your tools let you work in it: run shell commands, read, write and list files, a
 When the person asks for a screenshot of the desktop or of a web page, send it with showScreen. viewScreen is only for you to look; it is not shown in the chat. Do what the person asked first. Don't close tabs, relaunch apps, or tidy the desktop unless they ask.
 
 Launch Chromium from the shell once. If it is already running, open a page with \`chromium <url>\` instead of quitting and starting it again.`,
+    members && members.length > 1 && groupInstructions(bot, members),
   ]
     .filter(Boolean)
     .join("\n\n")
+}
+
+// Tells a bot it is in a group, who else is there, and that labeled messages
+// are the other bots' — including screenshots, which are not on its computer.
+function groupInstructions(bot: Bot, members: Bot[]) {
+  const others = members.filter((member) => member.id !== bot.id)
+  const otherNames = others.map((member) => member.name).join(", ")
+  const everyone = members
+    .map((member) =>
+      member.id === bot.id ? `${member.name} (you)` : member.name
+    )
+    .join(", ")
+  const example = others[0]?.name ?? "their name"
+  return `# This group
+You are in a group chat with other bots: ${otherNames}. The bots here are ${everyone}.
+
+You answer only as ${bot.name}. Replies from the other bots are labeled with their name in square brackets, like [${example}]. Those replies, their tool results, and their screenshots belong to them and come from their own sandboxes, not yours. Do not claim their words or actions as your own. Do not try to open their screenshots or files; they are not on your computer. If you need to see a desktop, use your own tools and look at yours.`
 }
