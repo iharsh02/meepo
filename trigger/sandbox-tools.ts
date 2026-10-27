@@ -374,7 +374,13 @@ export type ContextUsage = {
 // The chat's message type, with a typed part for each tool and the context
 // usage as metadata. Shared by the agent (trigger/chat.ts) and the chat UI.
 export type BotChatMessage = UIMessage<
-  { context?: ContextUsage },
+  {
+    context?: ContextUsage
+    // Which bot wrote this reply. Set for group chats; direct chats omit it.
+    botId?: string
+    botName?: string
+    botAvatar?: string
+  },
   UIDataTypes,
   InferUITools<typeof sandboxTools>
 >

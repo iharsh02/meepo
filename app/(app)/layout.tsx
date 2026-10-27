@@ -14,7 +14,10 @@ export default async function AppLayout({
   children: React.ReactNode
 }) {
   const user = await requireUser()
-  const bots = await caller.bots.list()
+  const [bots, groups] = await Promise.all([
+    caller.bots.list(),
+    caller.chats.groups(),
+  ])
   // The sidebar writes its open/collapsed state to this cookie.
   const sidebarOpen = (await cookies()).get("sidebar_state")?.value !== "false"
 
@@ -23,7 +26,7 @@ export default async function AppLayout({
       defaultOpen={sidebarOpen}
       style={{ "--sidebar-width-icon": "4rem" } as React.CSSProperties}
     >
-      <AppSidebar bots={bots} user={user} />
+      <AppSidebar bots={bots} groups={groups} user={user} />
       {/* Pinned to the viewport height so pages scroll inside themselves (the
           chat page scrolls only its messages), never the whole window. */}
       <SidebarInset className="h-svh min-w-0">{children}</SidebarInset>

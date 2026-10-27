@@ -1,8 +1,9 @@
 import { TRPCError } from "@trpc/server"
-import { and, asc, eq, sql } from "drizzle-orm"
+import { and, asc, eq, inArray, sql } from "drizzle-orm"
 import { z } from "zod"
 
 import { bots, chatMembers, chats } from "@/db/schema"
+import { groupChatInsertSchema } from "@/db/validation"
 import { createTRPCRouter, protectedProcedure } from "@/trpc/init"
 
 // Chats are always scoped to the signed-in user.
@@ -15,6 +16,62 @@ export const chatsRouter = createTRPCRouter({
         .from(chats)
         .where(and(eq(chats.id, input.id), eq(chats.userId, ctx.user.id)))
       return chat ?? null
+    }),
+
+  // The user's group chats with their bots, newest first, for the sidebar.
+  groups: protectedProcedure.query(({ ctx }) =>
+    ctx.db.query.chats.findMany({
+      where: { userId: ctx.user.id, kind: "group" },
+      with: { bots: { orderBy: { createdAt: "asc" } } },
+      orderBy: { createdAt: "desc" },
+    })
+  ),
+
+  // One of the user's group chats with its bots, or null when it isn't theirs.
+  groupById: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const chat = await ctx.db.query.chats.findFirst({
+        where: { id: input.id, userId: ctx.user.id, kind: "group" },
+        with: { bots: { orderBy: { createdAt: "asc" } } },
+      })
+      return chat ?? null
+    }),
+
+  // Creates a group chat with some of the user's bots. Rejects bot ids that
+  // aren't theirs, so the browser can't add someone else's bot.
+  createGroup: protectedProcedure
+    .input(groupChatInsertSchema)
+    .mutation(async ({ ctx, input }) => {
+      const owned = await ctx.db
+        .select({ id: bots.id })
+        .from(bots)
+        .where(
+          and(inArray(bots.id, input.botIds), eq(bots.userId, ctx.user.id))
+        )
+      if (owned.length !== input.botIds.length) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Some of those bots don't exist anymore. Reopen the form.",
+        })
+      }
+
+      return ctx.db.transaction(async (tx) => {
+        const [chat] = await tx
+          .insert(chats)
+          .values({ userId: ctx.user.id, kind: "group", name: input.name })
+          .returning({ id: chats.id })
+        if (!chat) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Couldn't create the group.",
+          })
+        }
+        await tx
+          .insert(chatMembers)
+          .values(input.botIds.map((botId) => ({ chatId: chat.id, botId })))
+        return chat
+      })
     }),
 
   // The direct chat with one of the user's bots, created on first open.

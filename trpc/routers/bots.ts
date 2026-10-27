@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server"
-import { and, desc, eq, inArray } from "drizzle-orm"
+import { and, count, desc, eq, inArray } from "drizzle-orm"
 import { z } from "zod"
 
 import { bots, chatMembers, chats } from "@/db/schema"
@@ -79,9 +79,10 @@ export const botsRouter = createTRPCRouter({
       return bot
     }),
 
-  // Deletes one of the user's bots, its sandbox and its direct chats. The
-  // sandbox goes first, so if Daytona fails the bot is still there to retry.
-  // The chats' saved conversations stay in Trigger.dev's transcript storage.
+  // Deletes one of the user's bots, its sandbox, its direct chats, and any
+  // group that would be left with fewer than two bots. The sandbox goes
+  // first, so if Daytona fails the bot is still there to retry. The chats'
+  // saved conversations stay in Trigger.dev's transcript storage.
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -121,6 +122,11 @@ export const botsRouter = createTRPCRouter({
         })
       }
       await ctx.db.transaction(async (tx) => {
+        const groups = await tx
+          .select({ id: chats.id })
+          .from(chats)
+          .innerJoin(chatMembers, eq(chatMembers.chatId, chats.id))
+          .where(and(eq(chats.kind, "group"), eq(chatMembers.botId, bot.id)))
         if (direct.length) {
           await tx.delete(chats).where(
             inArray(
@@ -130,6 +136,15 @@ export const botsRouter = createTRPCRouter({
           )
         }
         await tx.delete(bots).where(eq(bots.id, bot.id))
+        // Its groups lost a member with it (chat_members cascades). Delete any
+        // left with fewer than two bots.
+        for (const group of groups) {
+          const [{ members = 0 } = {}] = await tx
+            .select({ members: count() })
+            .from(chatMembers)
+            .where(eq(chatMembers.chatId, group.id))
+          if (members < 2) await tx.delete(chats).where(eq(chats.id, group.id))
+        }
       })
     }),
 })

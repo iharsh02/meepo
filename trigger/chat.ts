@@ -1,5 +1,6 @@
 import { chat } from "@trigger.dev/sdk/ai"
 import { asSchema, isStepCount, smoothStream } from "ai"
+import { z } from "zod"
 
 import { db } from "@/db"
 import type { Bot } from "@/db/schema"
@@ -28,86 +29,102 @@ const CONTEXT_WINDOW = 1_000_000
 
 // The bot's side of a chat, run durably on Trigger.dev. components/chat-view.tsx
 // talks to it through useTriggerChatTransport; the conversation is kept in the
-// platform's transcript storage under the chat id (a row in `chats`).
-export const botChat = chat.withUIMessage<BotChatMessage>().agent({
-  id: "bot-chat",
-  // Declared here too so screenshots reach the model as images on later turns.
-  tools: sandboxTools,
-  // Runs on every fresh worker (the first run and continuations): stores the
-  // bot's sandbox id, read by the tools.
-  onBoot: async ({ chatId }) => {
-    const bot = await chatBot(chatId)
-    botSandbox.init({ id: bot.sandboxId })
-    activeChat.init({ id: chatId })
-  },
-  // Runs before every turn, so edits from the side panel's Configure dialog
-  // apply from the next message, even in a run that's already going. Sets the
-  // bot's system prompt (applied by the `streamText` handed to `run`), and
-  // attaches the context usage to the reply after each step.
-  onTurnStart: async ({ chatId }) => {
-    const prompt = botInstructions(await chatBot(chatId))
-    chat.prompt.set(prompt)
-    const fixed = {
-      window: CONTEXT_WINDOW,
-      system: estimateTokens(prompt),
-      tools: await toolTokens(),
-    }
-    chat.setUIMessageStreamOptions({
-      messageMetadata: ({ part }) => {
-        if (part.type !== "finish-step") return undefined
-        const { inputTokens = 0, outputTokens = 0 } = part.usage
-        const context: ContextUsage = {
-          ...fixed,
-          used: inputTokens + outputTokens,
-        }
-        return { context }
-      },
-    })
-  },
-  run: async ({ messages, tools, signal, streamText }) =>
-    streamText({
-      model: MODEL,
-      messages,
-      tools,
-      abortSignal: signal,
-      // The SDK doesn't know this model's limits and would cap replies at 4,096
-      // tokens (thinking included) without this.
-      maxOutputTokens: 32_000,
-      // chat.agent wraps this in the SDK's retainStepMessages, which drops
-      // every tool result after the first on AI SDK 7.
-      // patches/@trigger.dev__sdk@4.7.5.patch fixes it; when upgrading the
-      // SDK, keep the patch until upstream fixes that function.
-      prepareStep: async ({ messages, steps }) => {
-        const prepared = await prepareAgentStep({
-          messages,
-          steps,
-          loadScreenshot: loadScreenshots(signal),
-        })
-        // The model is looking without acting. Take the screen tools away
-        // for this step; the note asking it to report what it sees is already
-        // on the messages.
-        if (!prepared.hideScreenTools) return { messages: prepared.messages }
-        return {
-          messages: prepared.messages,
-          activeTools: toolsExceptScreen,
-        }
-      },
-      // Room for a multi-step task (look, click, type, look again) in one turn.
-      stopWhen: isStepCount(40),
-      // Releases text word by word instead of in uneven provider chunks.
-      experimental_transform: smoothStream(),
-    }),
-})
+// platform's transcript storage under the chat id (a row in `chats`). In a
+// group chat the composer sends the bot to answer as message metadata
+// (`clientData.botId`), and each turn answers as that bot.
+export const botChat = chat
+  .withUIMessage<BotChatMessage>()
+  .withClientData({ schema: z.object({ botId: z.string().optional() }) })
+  .agent({
+    id: "bot-chat",
+    // Declared here too so screenshots reach the model as images on later turns.
+    tools: sandboxTools,
+    // Runs on every fresh worker (the first run and continuations). The
+    // sandbox id is set per turn in onTurnStart, since a group's turns can go
+    // to different bots.
+    onBoot: async ({ chatId }) => {
+      botSandbox.init({ id: null })
+      activeChat.init({ id: chatId })
+    },
+    // Runs before every turn, so edits from the side panel's Configure dialog
+    // apply from the next message, even in a run that's already going, and a
+    // group chat answers as the bot picked for this message. Points the tools
+    // at that bot's sandbox, sets its system prompt (applied by the `streamText`
+    // handed to `run`), and attaches the context usage (and, in a group, which
+    // bot wrote the reply) to the reply.
+    onTurnStart: async ({ chatId, clientData }) => {
+      const { bot, group } = await chatBot(chatId, clientData?.botId)
+      botSandbox.id = bot.sandboxId
+      const prompt = botInstructions(bot)
+      chat.prompt.set(prompt)
+      const fixed = {
+        window: CONTEXT_WINDOW,
+        system: estimateTokens(prompt),
+        tools: await toolTokens(),
+      }
+      const speaker = group
+        ? { botId: bot.id, botName: bot.name, botAvatar: bot.avatar }
+        : undefined
+      chat.setUIMessageStreamOptions({
+        messageMetadata: ({ part }) => {
+          if (part.type === "start") return speaker
+          if (part.type !== "finish-step") return undefined
+          const { inputTokens = 0, outputTokens = 0 } = part.usage
+          const context: ContextUsage = {
+            ...fixed,
+            used: inputTokens + outputTokens,
+          }
+          return { ...speaker, context }
+        },
+      })
+    },
+    run: async ({ messages, tools, signal, streamText }) =>
+      streamText({
+        model: MODEL,
+        messages,
+        tools,
+        abortSignal: signal,
+        // The SDK doesn't know this model's limits and would cap replies at 4,096
+        // tokens (thinking included) without this.
+        maxOutputTokens: 32_000,
+        // chat.agent wraps this in the SDK's retainStepMessages, which drops
+        // every tool result after the first on AI SDK 7.
+        // patches/@trigger.dev__sdk@4.7.5.patch fixes it; when upgrading the
+        // SDK, keep the patch until upstream fixes that function.
+        prepareStep: async ({ messages, steps }) => {
+          const prepared = await prepareAgentStep({
+            messages,
+            steps,
+            loadScreenshot: loadScreenshots(signal),
+          })
+          // The model is looking without acting. Take the screen tools away
+          // for this step; the note asking it to report what it sees is already
+          // on the messages.
+          if (!prepared.hideScreenTools) return { messages: prepared.messages }
+          return {
+            messages: prepared.messages,
+            activeTools: toolsExceptScreen,
+          }
+        },
+        // Room for a multi-step task (look, click, type, look again) in one turn.
+        stopWhen: isStepCount(40),
+        // Releases text word by word instead of in uneven provider chunks.
+        experimental_transform: smoothStream(),
+      }),
+  })
 
-// The bot in a direct chat.
-async function chatBot(chatId: string) {
+// The bot that answers in a chat, and whether it's a group. With no `botId`,
+// that's the oldest member (a direct chat's only bot). A `botId` that isn't a
+// member fails the turn rather than letting a different bot answer.
+async function chatBot(chatId: string, botId?: string) {
   const found = await db.query.chats.findFirst({
     where: { id: chatId },
-    with: { bots: true },
+    with: { bots: { orderBy: { createdAt: "asc" } } },
   })
-  const bot = found?.bots[0]
-  if (!bot) throw new Error(`No bot in chat ${chatId}`)
-  return bot
+  const members = found?.bots ?? []
+  const bot = botId ? members.find((member) => member.id === botId) : members[0]
+  if (!bot) throw new Error(`Bot ${botId ?? "(none)"} isn't in chat ${chatId}`)
+  return { bot, group: found?.kind === "group" }
 }
 
 // A rough token count, at about 4 characters a token. Only used to split the
