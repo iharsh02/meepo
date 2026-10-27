@@ -34,7 +34,11 @@ const CONTEXT_WINDOW = 1_000_000
 // (`clientData.botId`), and each turn answers as that bot.
 export const botChat = chat
   .withUIMessage<BotChatMessage>()
-  .withClientData({ schema: z.object({ botId: z.string().optional() }) })
+  // Optional as a whole: a run's boot metadata is empty, since startSession
+  // sends none and only group messages carry a botId.
+  .withClientData({
+    schema: z.object({ botId: z.string().optional() }).optional(),
+  })
   .agent({
     id: "bot-chat",
     // Declared here too so screenshots reach the model as images on later turns.
