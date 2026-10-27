@@ -96,3 +96,4 @@ export const relations = defineRelations({ bots, chats, chatMembers }, (r) => ({
 
 export type Bot = typeof bots.$inferSelect
 export type Chat = typeof chats.$inferSelect
+export type ChatWithBots = Chat & { bots: Bot[] }

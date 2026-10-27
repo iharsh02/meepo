@@ -8,6 +8,7 @@ import { LogOutIcon, PlusIcon, SearchIcon, UsersIcon } from "lucide-react"
 
 import { BotFace } from "@/components/bot-face"
 import { botsDialog } from "@/components/bots-dialog"
+import { GroupChatAvatar } from "@/components/group-chat-avatar"
 import { newGroupDialog } from "@/components/new-group-dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -42,13 +43,40 @@ import {
 } from "@/components/ui/sidebar"
 import type { SessionUser } from "@/lib/auth"
 import { authClient } from "@/lib/auth-client"
-import type { Bot } from "@/db/schema"
+import type { Bot, ChatWithBots } from "@/db/schema"
 import { cn } from "@/lib/utils"
 
-// The bot list. Collapses to a 4rem icon rail with ⌘B; ⌘K opens bot search.
-export function AppSidebar({ bots, user }: { bots: Bot[]; user: SessionUser }) {
+// The chat list: a direct chat per bot, and the group chats, newest first.
+// Collapses to a 4rem icon rail with ⌘B; ⌘K opens bot search.
+export function AppSidebar({
+  bots,
+  groups,
+  user,
+}: {
+  bots: Bot[]
+  groups: ChatWithBots[]
+  user: SessionUser
+}) {
   const pathname = usePathname()
   const [searchOpen, setSearchOpen] = useState(false)
+  const chats = [
+    ...bots.map((bot) => ({
+      id: bot.id,
+      href: `/chat/${bot.id}`,
+      name: bot.name,
+      detail: bot.job,
+      createdAt: bot.createdAt,
+      bots: [bot],
+    })),
+    ...groups.map((group) => ({
+      id: group.id,
+      href: `/group/${group.id}`,
+      name: group.name ?? "Group chat",
+      detail: group.bots.map((bot) => bot.name).join(", "),
+      createdAt: group.createdAt,
+      bots: group.bots,
+    })),
+  ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -83,27 +111,27 @@ export function AppSidebar({ bots, user }: { bots: Bot[]; user: SessionUser }) {
 
         <SidebarContent className="px-2 pt-2">
           <SidebarMenu className="gap-1.5">
-            {bots.map((bot) => (
-              <SidebarMenuItem key={bot.id}>
+            {chats.map((chat) => (
+              <SidebarMenuItem key={chat.id}>
                 <SidebarMenuButton
                   size="lg"
-                  tooltip={bot.name}
-                  isActive={pathname === `/chat/${bot.id}`}
-                  render={<Link href={`/chat/${bot.id}`} />}
+                  tooltip={chat.name}
+                  isActive={pathname === chat.href}
+                  render={<Link href={chat.href} />}
                   className="gap-2 rounded-sm group-data-[collapsible=icon]:size-12! group-data-[collapsible=icon]:p-2!"
                 >
-                  <BotFace seed={bot.avatar} />
+                  <GroupChatAvatar bots={chat.bots} />
                   <div className="flex min-w-0 flex-1 flex-col">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="leading-4.5 font-medium">
-                        {bot.name}
+                      <span className="truncate leading-4.5 font-medium">
+                        {chat.name}
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        {formatDistanceToNowStrict(bot.createdAt)}
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {formatDistanceToNowStrict(chat.createdAt)}
                       </span>
                     </div>
                     <span className="truncate text-xs text-muted-foreground">
-                      {bot.job}
+                      {chat.detail}
                     </span>
                   </div>
                 </SidebarMenuButton>

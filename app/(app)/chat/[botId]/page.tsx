@@ -2,7 +2,7 @@ import { notFound } from "next/navigation"
 
 import { AgentPanel } from "@/components/agent-panel"
 import { ChatView } from "@/components/chat-view"
-import { ChatsHeader } from "@/components/chats-header"
+import { ChatsHeader, WorkspaceButton } from "@/components/chats-header"
 import { ContextUsageProvider } from "@/components/context-usage"
 import {
   SandboxScreenPreview,
@@ -36,7 +36,9 @@ export default async function ChatPage({ params }: PageProps<"/chat/[botId]">) {
               className="flex h-full min-w-0 flex-col"
               style={{ overflow: "hidden" }}
             >
-              <ChatsHeader bot={bot} />
+              <ChatsHeader name={bot.name} bots={[bot]}>
+                <WorkspaceButton />
+              </ChatsHeader>
               <ChatView key={chat.id} chatId={chat.id} />
             </ResizablePanel>
             <WorkspacePanel>

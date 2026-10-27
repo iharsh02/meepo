@@ -4,7 +4,7 @@ import { TRPCError } from "@trpc/server"
 import { refresh, revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 
-import type { BotInsert } from "@/db/validation"
+import type { BotInsert, GroupChatInsert } from "@/db/validation"
 import { caller } from "@/trpc/server"
 
 // Creates a bot for the signed-in user via tRPC (which validates the input
@@ -16,6 +16,21 @@ export async function createBotAction(input: BotInsert) {
     const bot = await caller.bots.create(input)
     refresh()
     return { botId: bot.id }
+  } catch (error) {
+    if (error instanceof TRPCError) return { error: error.message }
+    throw error
+  }
+}
+
+// Creates a group chat for the signed-in user via tRPC (which validates the
+// input and checks the bots are theirs), then refreshes the page so the
+// sidebar shows it. Returns an error message instead of throwing so the form
+// can display it.
+export async function createGroupChatAction(input: GroupChatInsert) {
+  try {
+    const chat = await caller.chats.createGroup(input)
+    refresh()
+    return { chatId: chat.id }
   } catch (error) {
     if (error instanceof TRPCError) return { error: error.message }
     throw error
