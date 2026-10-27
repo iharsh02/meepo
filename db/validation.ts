@@ -41,13 +41,7 @@ export const groupChatInsertSchema = createInsertSchema(chats, {
   .pick({ name: true })
   .extend({
     botIds: z
-      .array(
-        z
-          .string()
-          .trim()
-          .min(1, "Pick a bot.")
-          .max(64, "That bot id is too long.")
-      )
+      .array(z.string())
       .min(2, "Pick at least two bots.")
       .max(20, "A group can have up to 20 bots.")
       .refine(

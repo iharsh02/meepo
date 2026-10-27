@@ -7,8 +7,7 @@ import { caller } from "@/trpc/server"
 
 // A group chat: the header, with the group's avatar and name, over the
 // conversation, whose composer picks which bot answers. Each bot has its own
-// desktop, so there's no workspace panel. A group with no bots left still
-// opens, with the composer disabled.
+// desktop, so there's no workspace panel.
 export default async function GroupChatPage({
   params,
 }: PageProps<"/group/[chatId]">) {
@@ -20,12 +19,7 @@ export default async function GroupChatPage({
     <ContextUsageProvider key={chat.id}>
       <div className="flex h-full min-w-0 flex-col overflow-hidden">
         <ChatsHeader name={chat.name ?? "Group chat"} bots={chat.bots} />
-        <ChatView
-          key={chat.id}
-          chatId={chat.id}
-          bots={chat.bots}
-          empty={chat.bots.length === 0}
-        />
+        <ChatView key={chat.id} chatId={chat.id} bots={chat.bots} />
       </div>
     </ContextUsageProvider>
   )

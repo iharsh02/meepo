@@ -60,7 +60,6 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { ToolCall, toolActivity } from "@/components/tool-call"
 import type { Bot } from "@/db/schema"
-import { emptyGroupMessage, shownChatError } from "@/lib/chat-errors"
 import type { botChat } from "@/trigger/chat"
 import type { BotChatMessage } from "@/trigger/sandbox-tools"
 
@@ -69,16 +68,13 @@ import type { BotChatMessage } from "@/trigger/sandbox-tools"
 // in trigger/chat.ts, which keeps the history under `chatId`; it's loaded back
 // on open. Key it by chat id so switching bots starts fresh. Pass a group
 // chat's `bots` to show a picker in the composer for which bot answers, and
-// each reply's face. `empty` is a group whose bots are all gone: history
-// still loads, and the composer stays disabled so sending can't start a turn.
+// each reply's face.
 export function ChatView({
   chatId,
   bots = [],
-  empty = false,
 }: {
   chatId: string
   bots?: ChatBot[]
-  empty?: boolean
 }) {
   const transport = useTriggerChatTransport<typeof botChat>({
     task: "bot-chat",
@@ -118,7 +114,6 @@ export function ChatView({
           transport={transport}
           initialMessages={transcript.messages}
           bots={bots}
-          empty={empty}
         />
       )}
     </div>
@@ -133,13 +128,11 @@ function Conversation({
   transport,
   initialMessages,
   bots,
-  empty,
 }: {
   chatId: string
   transport: TriggerChatTransport
   initialMessages: BotChatMessage[]
   bots: ChatBot[]
-  empty: boolean
 }) {
   const { messages, sendMessage, regenerate, stop, status, error } = useChat({
     id: chatId,
@@ -183,7 +176,7 @@ function Conversation({
                     }
                     bots={bots}
                     onRegenerate={
-                      !empty && index === messages.length - 1 && !busy
+                      index === messages.length - 1 && !busy
                         ? () => regenerate({ messageId: message.id, metadata })
                         : undefined
                     }
@@ -195,14 +188,9 @@ function Conversation({
                   {`${activityLabel}…`}
                 </Shimmer>
               )}
-              {empty && (
-                <p className="text-center text-sm text-foreground">
-                  {emptyGroupMessage}
-                </p>
-              )}
               {error && (
                 <p className="text-center text-sm text-destructive">
-                  {shownChatError(error)}
+                  Something went wrong. Try sending that again.
                 </p>
               )}
             </MessageScrollerContent>
@@ -213,11 +201,7 @@ function Conversation({
 
       <Composer
         busy={busy}
-        disabled={empty}
-        onSend={(text) => {
-          if (empty) return
-          sendMessage({ text }, { metadata })
-        }}
+        onSend={(text) => sendMessage({ text }, { metadata })}
         onStop={stopReply}
       >
         {bots.length > 1 && botId && (
@@ -376,13 +360,11 @@ function speakerFor(message: BotChatMessage, bots: ChatBot[]) {
 // send button becomes Stop. `children` sit in the toolbar after the menu.
 function Composer({
   busy,
-  disabled = false,
   onSend,
   onStop,
   children,
 }: {
   busy: boolean
-  disabled?: boolean
   onSend: (text: string) => void
   onStop: () => void
   children?: ReactNode
@@ -391,7 +373,7 @@ function Composer({
 
   function send() {
     const trimmed = text.trim()
-    if (!trimmed || busy || disabled) return
+    if (!trimmed || busy) return
     onSend(trimmed)
     setText("")
   }
@@ -406,10 +388,7 @@ function Composer({
     >
       <InputGroup className="dark:bg-input/80">
         <InputGroupTextarea
-          placeholder={
-            disabled ? emptyGroupMessage : "What would you like to know?"
-          }
-          disabled={disabled}
+          placeholder="What would you like to know?"
           className="max-h-48 min-h-10"
           value={text}
           onChange={(event) => setText(event.target.value)}
@@ -440,7 +419,7 @@ function Composer({
               variant="default"
               size="icon-sm"
               className="ml-auto rounded-lg"
-              disabled={disabled || !text.trim()}
+              disabled={!text.trim()}
             >
               <CornerDownLeftIcon />
               <span className="sr-only">Send</span>

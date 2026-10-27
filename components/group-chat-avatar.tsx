@@ -1,5 +1,3 @@
-import { UsersIcon } from "lucide-react"
-
 import { BotFace } from "@/components/bot-face"
 import type { Bot } from "@/db/schema"
 import { cn } from "@/lib/utils"
@@ -30,7 +28,8 @@ const layouts = [
 // A chat's avatar: up to three of its bots' faces, and a "+N" for the rest,
 // packed into the space of a single <BotFace /> so a group takes up the same
 // room as a direct chat in the sidebar and chat header. Size it with a
-// `size-*` class, like BotFace.
+// `size-*` class, like BotFace. The count's text has a 7px floor so it stays
+// readable at header size, where a cell is only 10px.
 export function GroupChatAvatar({
   bots,
   className,
@@ -38,19 +37,6 @@ export function GroupChatAvatar({
   bots: Pick<Bot, "id" | "avatar">[]
   className?: string
 }) {
-  if (bots.length === 0) {
-    return (
-      <div
-        className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-foreground",
-          className
-        )}
-      >
-        <UsersIcon className="size-1/2" />
-      </div>
-    )
-  }
-
   const faces = bots.slice(0, 3)
   const rest = bots.length - faces.length
   const layout = layouts[faces.length + (rest > 0 ? 1 : 0)] ?? []
@@ -67,7 +53,7 @@ export function GroupChatAvatar({
       {rest > 0 && (
         <span
           className={cn(
-            "absolute flex items-center justify-center rounded-full bg-muted text-[20cqw] leading-none font-semibold text-foreground",
+            "absolute flex items-center justify-center rounded-full bg-muted text-[max(30cqw,7px)] leading-none font-semibold tracking-tighter text-foreground",
             layout[3]
           )}
         >
