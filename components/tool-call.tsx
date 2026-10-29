@@ -18,8 +18,18 @@ export type BotToolPart = ToolUIPart<InferUITools<typeof sandboxTools>>
 // did, with its input and output tucked inside. Screens are special-cased:
 // viewScreen (the bot looking for itself) never shows its image, and
 // showScreen (the person asked to see) shows it under the header; both show
-// the error if the screenshot failed.
+// the error if the screenshot failed. A handoff is a single line of text.
 export function ToolCall({ part }: { part: BotToolPart }) {
+  if (part.type === "tool-handOff") {
+    if (part.state === "output-error") return null
+    return (
+      <p className="text-sm text-foreground/80">
+        {part.state === "output-available"
+          ? `Handed off to ${part.output.botName}: ${part.output.reason}`
+          : "Handing off…"}
+      </p>
+    )
+  }
   if (part.type === "tool-viewScreen" || part.type === "tool-showScreen") {
     const shown = part.type === "tool-showScreen"
     return (
@@ -88,6 +98,8 @@ export function toolActivity(part: BotToolPart) {
       return "Looking at the screen"
     case "tool-showScreen":
       return "Taking a screenshot"
+    case "tool-handOff":
+      return "Handing off"
   }
 }
 

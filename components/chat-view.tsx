@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, type ComponentProps, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ComponentProps } from "react"
 import { useChat } from "@ai-sdk/react"
 import type { TriggerChatTransport } from "@trigger.dev/sdk/chat"
 import {
@@ -26,19 +26,19 @@ import {
   MessageResponse,
 } from "@/components/ai-elements/message"
 import {
-  PromptInputSelect,
-  PromptInputSelectContent,
-  PromptInputSelectItem,
-  PromptInputSelectTrigger,
-  PromptInputSelectValue,
-} from "@/components/ai-elements/prompt-input"
-import {
   Reasoning,
   ReasoningContent,
   ReasoningTrigger,
 } from "@/components/ai-elements/reasoning"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { BotFace } from "@/components/bot-face"
+import {
+  MentionText,
+  MentionTextarea,
+  mentionedBot,
+  useMentionMenu,
+  type MentionBot,
+} from "@/components/bot-mentions"
 import { ComposerMenu } from "@/components/composer-menu"
 import { useReportContextUsage } from "@/components/context-usage"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
@@ -46,7 +46,6 @@ import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
-  InputGroupTextarea,
 } from "@/components/ui/input-group"
 import { Message, MessageContent } from "@/components/ui/message"
 import {
@@ -59,7 +58,7 @@ import {
 } from "@/components/ui/message-scroller"
 import { Spinner } from "@/components/ui/spinner"
 import { ToolCall, toolActivity } from "@/components/tool-call"
-import type { Bot } from "@/db/schema"
+import { handOffIn, ownParts } from "@/lib/hand-off"
 import type { botChat } from "@/trigger/chat"
 import type { BotChatMessage } from "@/trigger/sandbox-tools"
 
@@ -67,14 +66,13 @@ import type { BotChatMessage } from "@/trigger/sandbox-tools"
 // space under the chat page's header. Replies stream from the bot-chat agent
 // in trigger/chat.ts, which keeps the history under `chatId`; it's loaded back
 // on open. Key it by chat id so switching bots starts fresh. Pass a group
-// chat's `bots` to show a picker in the composer for which bot answers, and
-// each reply's face.
+// chat's `bots` to @-mention them in the composer and show each reply's face.
 export function ChatView({
   chatId,
   bots = [],
 }: {
   chatId: string
-  bots?: ChatBot[]
+  bots?: MentionBot[]
 }) {
   const transport = useTriggerChatTransport<typeof botChat>({
     task: "bot-chat",
@@ -132,21 +130,72 @@ function Conversation({
   chatId: string
   transport: TriggerChatTransport
   initialMessages: BotChatMessage[]
-  bots: ChatBot[]
+  bots: MentionBot[]
 }) {
+  // The bot that answers in a group chat: the one the person's message
+  // @-mentions, else the last one mentioned (or handed a message). On load,
+  // last saved speaker or recipient, else the oldest. Sent with each message
+  // as metadata, read by trigger/chat.ts as `clientData.botId`, and saved on
+  // the user message so it shows who the message went to.
+  const [botId, setBotId] = useState(
+    () =>
+      initialMessages.findLast((message) =>
+        bots.some((bot) => bot.id === message.metadata?.botId)
+      )?.metadata?.botId ?? bots[0]?.id
+  )
+
+  function send(text: string) {
+    const target = mentionedBot(text, bots)?.id ?? botId
+    setBotId(target)
+    const metadata = { botId: target }
+    void sendMessage({ text, metadata }, { metadata })
+  }
+
+  // Handoffs already sent, by the id of the reply that made them, with how
+  // many of its parts the next reply starts with. useChat starts a reply from
+  // a copy of a trailing assistant message, but the agent sends a handed-over
+  // answer as a new message, so that answer arrives with the handing-off
+  // reply's parts in front; ownParts drops them. A handoff already in the
+  // loaded transcript counts as sent, with nothing copied: its answer is there
+  // or resuming.
+  const [handOffs, setHandOffs] = useState<Record<string, number>>(() => {
+    const last = initialMessages.at(-1)
+    return last && handOffIn(last) ? { [last.id]: 0 } : {}
+  })
   const { messages, sendMessage, regenerate, stop, status, error } = useChat({
     id: chatId,
     messages: initialMessages,
     transport,
     resume: initialMessages.length > 0,
+    // Only a successfully finished reply can start a handoff. Mounting with a
+    // saved handoff, stopping, or losing the connection must not send one.
+    onFinish: ({ messages, isAbort, isDisconnect, isError }) => {
+      if (isAbort || isDisconnect || isError) return
+      const last = messages.at(-1)
+      const target = handOffIn(ownParts(messages, handOffs).at(-1))?.botId
+      if (!last || !target || last.id in handOffs) return
+      setHandOffs((sent) => ({ ...sent, [last.id]: last.parts.length }))
+      setBotId(target)
+      void sendMessage(undefined, {
+        body: { action: { type: "handoff" } },
+        metadata: { botId: target },
+      })
+    },
   })
   useReportContextUsage(messages)
   const busy = status === "submitted" || status === "streaming"
-  const activityLabel = busy ? activity(messages, status) : null
-  // The bot that answers the next message in a group chat, sent with each
-  // message as metadata and read by trigger/chat.ts as `clientData.botId`.
-  const [botId, setBotId] = useState(bots[0]?.id)
-  const metadata = { botId }
+  const shown = ownParts(messages, handOffs)
+  const activityLabel = busy ? activity(shown, status) : null
+
+  // Regenerates the last reply as the current bot. A regenerated reply starts
+  // empty, so if it follows a handoff, nothing needs dropping from it.
+  function regenerateReply(messageId: string) {
+    const previous = messages[messages.findIndex((m) => m.id === messageId) - 1]
+    if (previous && previous.id in handOffs) {
+      setHandOffs((sent) => ({ ...sent, [previous.id]: 0 }))
+    }
+    void regenerate({ messageId, metadata: { botId } })
+  }
 
   // Stops the reply: stop() ends the stream on screen, and stopGeneration()
   // tells the agent to stop this turn even when the stream was resumed after a
@@ -163,7 +212,7 @@ function Conversation({
         <MessageScroller className="flex-1">
           <MessageScrollerViewport>
             <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-8 px-6 py-6">
-              {messages.map((message, index) => (
+              {shown.map((message, index) => (
                 <MessageScrollerItem
                   key={message.id}
                   messageId={message.id}
@@ -172,12 +221,12 @@ function Conversation({
                   <ChatMessage
                     message={message}
                     streaming={
-                      status === "streaming" && index === messages.length - 1
+                      status === "streaming" && index === shown.length - 1
                     }
                     bots={bots}
                     onRegenerate={
-                      index === messages.length - 1 && !busy
-                        ? () => regenerate({ messageId: message.id, metadata })
+                      index === shown.length - 1 && !busy
+                        ? () => regenerateReply(message.id)
                         : undefined
                     }
                   />
@@ -199,15 +248,7 @@ function Conversation({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      <Composer
-        busy={busy}
-        onSend={(text) => sendMessage({ text }, { metadata })}
-        onStop={stopReply}
-      >
-        {bots.length > 1 && botId && (
-          <BotPicker bots={bots} value={botId} onChange={setBotId} />
-        )}
-      </Composer>
+      <Composer busy={busy} bots={bots} onSend={send} onStop={stopReply} />
     </>
   )
 }
@@ -248,7 +289,7 @@ function ChatMessage({
   onRegenerate,
 }: {
   message: BotChatMessage
-  bots: ChatBot[]
+  bots: MentionBot[]
   streaming: boolean
   onRegenerate?: () => void
 }) {
@@ -269,7 +310,17 @@ function ChatMessage({
         <MessageContent>
           <Bubble variant="secondary" align="end">
             <BubbleContent className="rounded-xl px-4 py-2.5 text-[15px] leading-6 whitespace-pre-wrap text-foreground">
-              {text}
+              {bots.length > 1 ? (
+                <MentionText
+                  text={text}
+                  bots={bots}
+                  sentTo={bots.find(
+                    (bot) => bot.id === message.metadata?.botId
+                  )}
+                />
+              ) : (
+                text
+              )}
             </BubbleContent>
           </Bubble>
         </MessageContent>
@@ -337,12 +388,10 @@ function ChatMessage({
   )
 }
 
-type ChatBot = Pick<Bot, "id" | "name" | "avatar">
-
 // The bot that wrote an assistant reply, in a group of two or more. Direct
 // chats pass no bots, so their replies stay unlabeled. A bot that has since
 // left still shows, from the name and face saved on the message.
-function speakerFor(message: BotChatMessage, bots: ChatBot[]) {
+function speakerFor(message: BotChatMessage, bots: MentionBot[]) {
   if (bots.length < 2 || message.role !== "assistant") return undefined
   const id = message.metadata?.botId
   const known = id ? bots.find((bot) => bot.id === id) : undefined
@@ -357,19 +406,27 @@ function speakerFor(message: BotChatMessage, bots: ChatBot[]) {
 }
 
 // Enter sends, Shift+Enter adds a newline. While `busy` sending waits and the
-// send button becomes Stop. `children` sit in the toolbar after the menu.
+// send button becomes Stop. In a group chat (two or more `bots`), typing "@"
+// opens a list of the bots to mention (components/bot-mentions.tsx).
 function Composer({
   busy,
+  bots,
   onSend,
   onStop,
-  children,
 }: {
   busy: boolean
+  bots: MentionBot[]
   onSend: (text: string) => void
   onStop: () => void
-  children?: ReactNode
 }) {
   const [text, setText] = useState("")
+  const textarea = useRef<HTMLTextAreaElement>(null)
+  const mentions = useMentionMenu({
+    bots,
+    text,
+    setText,
+    textarea: () => textarea.current,
+  })
 
   function send() {
     const trimmed = text.trim()
@@ -380,19 +437,31 @@ function Composer({
 
   return (
     <form
-      className="mx-auto w-full max-w-3xl shrink-0 px-6 pt-2 pb-4"
+      className="relative mx-auto w-full max-w-3xl shrink-0 px-6 pt-2 pb-4"
       onSubmit={(event) => {
         event.preventDefault()
         send()
       }}
     >
-      <InputGroup className="dark:bg-input/80">
-        <InputGroupTextarea
-          placeholder="What would you like to know?"
+      {mentions.menu}
+      <InputGroup className="h-auto dark:bg-input/80">
+        <MentionTextarea
+          bots={bots}
+          ref={textarea}
+          placeholder={
+            bots.length > 1
+              ? "Message the group, type @ to pick a bot"
+              : "What would you like to know?"
+          }
           className="max-h-48 min-h-10"
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => {
+            setText(event.target.value)
+            mentions.trackCaret(event.target, true)
+          }}
+          onSelect={(event) => mentions.trackCaret(event.currentTarget, false)}
           onKeyDown={(event) => {
+            if (mentions.onKeyDown(event)) return
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault()
               send()
@@ -401,7 +470,6 @@ function Composer({
         />
         <InputGroupAddon align="block-end" className="px-2 pb-2.5">
           <ComposerMenu />
-          {children}
           {busy ? (
             <InputGroupButton
               type="button"
@@ -428,50 +496,6 @@ function Composer({
         </InputGroupAddon>
       </InputGroup>
     </form>
-  )
-}
-
-// The composer's dropdown for which bot in a group chat answers next.
-function BotPicker({
-  bots,
-  value,
-  onChange,
-}: {
-  bots: ChatBot[]
-  value: string
-  onChange: (botId: string) => void
-}) {
-  return (
-    <PromptInputSelect
-      value={value}
-      onValueChange={(id) => {
-        if (typeof id === "string") onChange(id)
-      }}
-    >
-      <PromptInputSelectTrigger size="sm" aria-label="Bot to answer">
-        <PromptInputSelectValue>
-          {(id: string) => {
-            const bot = bots.find((bot) => bot.id === id)
-            return (
-              bot && (
-                <span className="flex items-center gap-1.5">
-                  <BotFace seed={bot.avatar} className="size-4" />
-                  {bot.name}
-                </span>
-              )
-            )
-          }}
-        </PromptInputSelectValue>
-      </PromptInputSelectTrigger>
-      <PromptInputSelectContent>
-        {bots.map((bot) => (
-          <PromptInputSelectItem key={bot.id} value={bot.id}>
-            <BotFace seed={bot.avatar} className="size-4" />
-            {bot.name}
-          </PromptInputSelectItem>
-        ))}
-      </PromptInputSelectContent>
-    </PromptInputSelect>
   )
 }
 

@@ -19,8 +19,9 @@ import {
   screenshotCache,
 } from "@/trigger/screenshot-messages"
 
-// The chat's bot's sandbox id, set in the agent's onBoot (trigger/chat.ts) and
-// read by every tool below. Null for a bot made before sandboxes existed.
+// The answering bot's sandbox id, set in the agent's onTurnStart
+// (trigger/chat.ts) and read by every sandbox tool below. Null for a bot made
+// before sandboxes existed.
 export const botSandbox = chat.local<{ id: string | null }>({
   id: "botSandbox",
 })
@@ -28,6 +29,15 @@ export const botSandbox = chat.local<{ id: string | null }>({
 // The chat these tools are running in, set alongside the sandbox id. Screenshot
 // files are grouped by it so pruning one chat leaves the others alone.
 export const activeChat = chat.local<{ id: string }>({ id: "activeChat" })
+
+// The group the answering bot is in, set in the agent's onTurnStart and read
+// by handOff. `members` is empty in a direct chat. `canHandOff` is false there,
+// and for a turn another bot handed over, which must be answered.
+export const groupTurn = chat.local<{
+  botId: string | null
+  members: { id: string; name: string }[]
+  canHandOff: boolean
+}>({ id: "groupTurn" })
 
 async function sandbox() {
   if (!botSandbox.id) throw new Error("This bot has no sandbox.")
@@ -217,7 +227,8 @@ export const sandboxTools = {
   }),
 
   readFile: tool({
-    description: "Read a text file in your sandbox.",
+    description:
+      "Read an existing text file in your sandbox when you need its contents. Use listFiles first if you don't know its path. This does not read the browser or another bot's files.",
     inputSchema: z.object({
       path: z.string().describe("Path of the file to read."),
     }),
@@ -229,7 +240,8 @@ export const sandboxTools = {
   }),
 
   writeFile: tool({
-    description: "Create or overwrite a text file in your sandbox.",
+    description:
+      "Create or replace a text file in your sandbox with its full new contents. Use for requested file changes, not for a draft that belongs in the chat. Read an existing file before editing it; this replaces the whole file.",
     inputSchema: z.object({
       path: z.string().describe("Path of the file to write."),
       content: z.string().describe("The file's full new contents."),
@@ -243,7 +255,8 @@ export const sandboxTools = {
   }),
 
   listFiles: tool({
-    description: "List the files and folders in a folder of your sandbox.",
+    description:
+      "List files and folders in a directory of your sandbox to discover paths. Use readFile for a file's contents or bash for recursive searches.",
     inputSchema: z.object({
       path: z
         .string()
@@ -357,6 +370,35 @@ export const sandboxTools = {
   showScreen: screenTool(
     "Take a screenshot of your desktop and show it in the chat. Use it when the person asks to see the screen or a web page open on it."
   ),
+
+  // Group chats only; trigger/chat.ts leaves it out elsewhere. The turn stops
+  // after the call, and the chat UI then asks the named bot to answer
+  // (components/chat-view.tsx).
+  handOff: tool({
+    description:
+      "Transfer the person's latest message to one other member of this group when their listed job clearly fits the requested outcome better, or the person explicitly requests that transfer. Use before doing the work, as the only tool call in the step. Keep tasks you can handle well, ambiguous or overlapping job matches, and requests addressed to you unless a transfer is requested. This transfers the whole request; it does not delegate a subtask, copy sandbox files, or grant tools or access. The recipient answers next and cannot hand it onward.",
+    inputSchema: z.object({
+      botId: z
+        .string()
+        .describe("The id of the bot to hand off to, from the group's list."),
+      reason: z
+        .string()
+        .describe(
+          "One short sentence connecting the requested outcome to the target bot's listed job, or explaining the person's explicit transfer request."
+        ),
+    }),
+    execute: async ({ botId, reason }) => {
+      const bot = groupTurn.members.find(
+        (member) => member.id === botId && member.id !== groupTurn.botId
+      )
+      if (!bot) {
+        throw new Error(
+          "That id isn't another bot in this group. Use one from the group's list."
+        )
+      }
+      return { botId: bot.id, botName: bot.name, reason }
+    },
+  }),
 }
 
 // How full the model's context window is after a reply step, in tokens: all
@@ -376,7 +418,8 @@ export type ContextUsage = {
 export type BotChatMessage = UIMessage<
   {
     context?: ContextUsage
-    // Which bot wrote this reply. Set for group chats; direct chats omit it.
+    // In a group chat, the bot a reply came from, or the bot a person's
+    // message was sent to. Direct chats omit it.
     botId?: string
     botName?: string
     botAvatar?: string
