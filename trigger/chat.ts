@@ -3,6 +3,7 @@ import { asSchema, isStepCount, smoothStream, type StopCondition } from "ai"
 import { z } from "zod"
 
 import { db } from "@/db"
+import { MEMORY_FILE } from "@/lib/daytona"
 import { handOffIn } from "@/lib/hand-off"
 import type { Bot } from "@/db/schema"
 import {
@@ -219,6 +220,7 @@ Your tools let you work in it: run shell commands, read, write and list files, a
 When the person asks for a screenshot of the desktop or of a web page, send it with showScreen. viewScreen is only for you to look; it is not shown in the chat. Do what the person asked first. Don't close tabs, relaunch apps, or tidy the desktop unless they ask.
 
 Launch Chromium from the shell once. If it is already running, open a page with \`chromium <url>\` instead of quitting and starting it again.`,
+    bot.sandboxId && memoryInstructions(),
     bot.sandboxId
       ? `# Choosing a sandbox tool
 - Find an unknown file path with listFiles; read a known text file with readFile. Use bash for searches across files, commands, builds, tests, or running scripts.
@@ -232,6 +234,23 @@ You have no sandbox attached. Do not call shell, file, screenshot, mouse, or key
   ]
     .filter(Boolean)
     .join("\n\n")
+}
+
+// The prompt section on a bot's memory file (MEMORY_FILE in lib/daytona.ts):
+// what to save from its conversations, when to read it back, and what never to
+// store. It's how a bot recalls in a group chat what the person said in their
+// private 1:1 chat, since each conversation only sees its own messages.
+function memoryInstructions() {
+  return `# Your memory
+${MEMORY_FILE} in your sandbox's working directory is your long-term memory. Use the path "${MEMORY_FILE}" with readFile and writeFile. Each conversation, private or group, only shows you its own messages; ${MEMORY_FILE} is how you carry what you learn about the person from one conversation to another.
+
+Save to it when the person tells you something worth knowing later: facts about them, their preferences, decisions, ongoing projects, people and names, dates, and anything they ask you to remember. Do this especially in your private 1:1 chat, so you can use it when they bring it up in a group chat. Don't save small talk, one-off requests, things only needed for the current reply, or secrets such as passwords, keys and tokens.
+
+To save, read the file first, then write it back whole with the new note added or an outdated one corrected; writeFile replaces the entire file. Keep it short and organized: one fact per line, under a few headings. If the file doesn't exist yet, create it.
+
+Read it before you answer when the person refers to something they told you before, asks what you know or remember about them, or when the conversation is missing context you may have saved. In a group chat, read it whenever they ask about something from your private conversations. If it has nothing relevant, say you don't know instead of guessing. Don't read it for messages that don't need it.
+
+Use what you remember naturally, and only what the message needs; don't recite the file. Your memory is yours alone: the other bots can't read it, and you can't read theirs.`
 }
 
 // The group chat section of a bot's prompt: who else is in the group and what
@@ -251,6 +270,8 @@ function groupInstructions(bot: Bot, members: Bot[], handedOff: boolean) {
 This conversation is a group chat. The person who created you added several of their bots to it:
 
 ${roster}
+
+Your private 1:1 conversations with the person are not part of this chat, so you can't see them here. Your ${MEMORY_FILE} is how you know what they told you there.
 
 You are the selected bot for this message, either through a mention or the conversation's current selection. Answer only as ${bot.name}. Earlier replies in this conversation may have been written by other bots. You didn't write them, so don't take credit for their words or their work, and don't repeat what they already did unless asked. You can build on what they found.`,
     `# Your tools in this group

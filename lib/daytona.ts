@@ -11,11 +11,25 @@ const daytona = new Daytona({
   apiUrl: process.env.DAYTONA_API_URL,
 })
 
-// Creates the sandbox a new bot owns and returns its id, for `bots.sandboxId`.
-// Daytona boots a sandbox as part of creating it (there's no create-stopped
-// option) and stops it again after 15 idle minutes.
+// The bot's long-term memory file, in its sandbox's working directory, where
+// the agent's file tools and shell resolve relative paths. Created empty with
+// the sandbox; the agent's prompt (trigger/chat.ts) says when to read and
+// write it.
+export const MEMORY_FILE = "MEMORY.md"
+
+// Creates the sandbox a new bot owns, with an empty MEMORY_FILE in it, and
+// returns its id, for `bots.sandboxId`. Daytona boots a sandbox as part of
+// creating it (there's no create-stopped option) and stops it again after 15
+// idle minutes. If the memory file can't be written, the sandbox is deleted
+// again so a failed create leaves nothing behind.
 export async function createSandbox() {
   const sandbox = await daytona.create()
+  try {
+    await sandbox.fs.uploadFile(Buffer.from(""), MEMORY_FILE)
+  } catch (error) {
+    await sandbox.delete().catch(() => {})
+    throw error
+  }
   return sandbox.id
 }
 
